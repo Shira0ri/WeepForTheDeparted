@@ -1,0 +1,7 @@
+displayName = Weep for the Departed
+author = Shiraori
+version = 0.1.0
+homepage = https://github.com/
+modReferences = InnoVault
+buildIgnore = scratch/*, media/*, TestComp*.png, *.txt, *.md, *.bat
+

@@ -1,0 +1,120 @@
+Mods: {
+	WeepForTheDeparted: {
+		Items: {
+			Naught: {
+				DisplayName: Naught
+				Tooltip:
+					'''
+					Acheron's blade from the boundless depths of Nihility.
+					Its power grows with every great soul laid to rest.
+					'''
+			}
+		}
+
+		Configs: {
+			WeepConfig: {
+				DisplayName: Weep for the Departed Config
+
+				Headers: {
+					WeaponScaling: Weapon Scaling Settings
+					BossTracking: Boss Tracking Settings
+				}
+
+				BaseSwordDamage: {
+					Label: Base Sword Damage
+					Tooltip: Base damage of Naught before any defeated bosses.
+				}
+
+				DamagePerBoss: {
+					Label: Bonus Damage Per Boss
+					Tooltip: Flat base damage added to Naught for each defeated boss.
+				}
+
+				CritPerBoss: {
+					Label: Bonus Crit Per Boss (%)
+					Tooltip: Additional critical strike chance added to Naught per defeated boss.
+				}
+
+				UniversalBossScaling: {
+					Label: Universal Boss Scaling
+					Tooltip: When enabled, all non-vanilla modded bosses defeated will be tracked and counted.
+				}
+
+				IncludeCalamityBosses: {
+					Label: Include Calamity Bosses
+					Tooltip: When enabled, bosses from the Calamity Mod are counted toward progression scaling.
+				}
+			}
+		}
+	}
+}
+
+Items: {
+	Naught: {
+		DisplayName: Naught
+		Tooltip: ""
+	}
+
+	NihilityDebugItem: {
+		DisplayName: Nihility Debug Item
+		Tooltip: ""
+	}
+}
+
+Configs: {
+	WeepConfig: {
+		DisplayName: Weep Config
+
+		Headers: {
+			WeaponScaling: Weapon Scaling Header
+			BossTracking: Boss Tracking Header
+		}
+
+		BaseSwordDamage: {
+			Label: Base Sword Damage
+			Tooltip: ""
+		}
+
+		DamagePerBoss: {
+			Label: Damage Per Boss
+			Tooltip: ""
+		}
+
+		CritPerBoss: {
+			Label: Crit Per Boss
+			Tooltip: ""
+		}
+
+		UniversalBossScaling: {
+			Label: Universal Boss Scaling
+			Tooltip: ""
+		}
+
+		IncludeCalamityBosses: {
+			Label: Include Calamity Bosses
+			Tooltip: ""
+		}
+	}
+}
+
+Projectiles: {
+	NaughtHeldSwing.DisplayName: Naught Held Swing
+	NaughtSlashVisual.DisplayName: Naught Slash Visual
+	NaughtClone.DisplayName: Naught Clone
+	NaughtDash.DisplayName: Naught Dash
+	NaughtDashTrail.DisplayName: Naught Dash Trail
+	CrimsonKnotTransferBeam.DisplayName: Crimson Knot Transfer Beam
+	SlashedDreamUltimate.DisplayName: Slashed Dream Ultimate
+	BloodBlossomNeedle.DisplayName: Blood Blossom Needle
+	BloodLotusShockwave.DisplayName: Blood Lotus Shockwave
+	MirageWeftThread.DisplayName: Mirage Weft Thread
+	PetalVortex.DisplayName: Petal Vortex
+	ThunderCoreBolt.DisplayName: Thunder Core Bolt
+	VoidFissure.DisplayName: Void Fissure
+}
+
+Keybinds: {
+	"Ultimate: Slashed Dream Cries in Red.DisplayName": Ultimate:  Slashed  Dream  Cries in  Red
+	"Domain: Nihility.DisplayName": Domain:  Nihility
+	"Nihility Ledger: Charms & Eidolons.DisplayName": Nihility  Ledger:  Charms &  Eidolons
+}

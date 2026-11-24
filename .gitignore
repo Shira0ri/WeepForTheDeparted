@@ -1,0 +1,35 @@
+# User-specific files
+*.rsuser
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Build and output directories
+[Bb]in/
+[Oo]bj/
+build/
+
+# IDE and Editor directories
+.vs/
+.vscode/
+.idea/
+*.DotSettings.user
+
+# Terraria & tModLoader compiled packages
+*.tmod
+
+# Operating System files
+[Tt]humbs.db
+ehthumbs.db
+[Dd]esktop.ini
+.DS_Store
+*.tmp
+*.temp
+*.log
+*.bak
+*.swp
+*~
+
+# Developer local shortcuts
+*.lnk

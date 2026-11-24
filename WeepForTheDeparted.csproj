@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="..\tModLoader.targets" Condition="Exists('..\tModLoader.targets')" />
+  <Import Project="$(USERPROFILE)\Documents\My Games\Terraria\tModLoader\ModSources\tModLoader.targets" Condition="!Exists('..\tModLoader.targets') and Exists('$(USERPROFILE)\Documents\My Games\Terraria\tModLoader\ModSources\tModLoader.targets')" />
+
+  <PropertyGroup>
+    <AssemblyName>WeepForTheDeparted</AssemblyName>
+    <TargetFramework>net8.0</TargetFramework>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="InnoVault">
+      <HintPath>..\InnoVault\bin\Debug\net8.0\InnoVault.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- Ensure tModLoader builds using the ModSources\WeepForTheDeparted identifier -->
+  <Target Name="BuildMod" AfterTargets="Build" Condition="'$(BuildMod)' == 'true'">
+    <Exec Command="dotnet $(tMLServerPath) -build &quot;$(USERPROFILE)\Documents\My Games\Terraria\tModLoader\ModSources\WeepForTheDeparted&quot; -eac $(TargetPath) -define &quot;$(DefineConstants)&quot; -unsafe $(AllowUnsafeBlocks) $(ExtraBuildModFlags)" WorkingDirectory="$(tMLSteamPath)" />
+  </Target>
+</Project>

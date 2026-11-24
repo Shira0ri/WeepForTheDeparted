@@ -1,0 +1,114 @@
+Comments on artifact URI: file:///c%3A/Users/Shiraori/.gemini/antigravity/brain/aa0487bb-0dc4-44b4-af65-3cbcc51e1417/acheron_terraria_kit_design.md
+
+Selection:
+>Terraria Translation Options:
+  
+  
+  Option A (Right-Click Combo Branch): Right-Click is currently Flash Step Dash. Performing Flash Step through enemies cleaves them with thunderous lightning (Octobolt Flash), leaving the decoy shadow clone at origin and instantly awarding 1 Slashed Dream + 1 Crimson Knot.
+  Option B (Directional Special Attack): Double-tapping a directional key (A/D) + Attack performs an instant blink-strike across the cursor line with chain lightning.
+  Option C (Clone Synchronization): When dashing, the decoy clone channels Octobolt Flash after 1 second, striking surrounding enemies with lightning.
+
+Comment: "first dash leaves a clone that lasts for 9 seconds, each clone after that also follows this timer (so when the first clone disappears, all disappears, maybe when spawning a clone after the first, it looks at what the timer currently is then sets that as its timer), when the clones disappears, gain 1 slashed dream and the highest health enemy on screen gains 1 crimson knot"
+
+Selection:
+>Kit Integration:
+  
+  
+  Hits 1–3 maintain combat flow and cadence.
+  Beat 4 (Finisher Cleave): Hits heavy, generates 1 point of Slashed Dream, and applies 1 stack of Crimson Knot to all struck enemies.
+
+Comment: "no, don't apply slashed dream or crimson knot that easily"
+
+Selection:
+>Trigger: When Slashed Dream reaches 9/9, press a dedicated Ultimate keybind (or Left + Right click combined).
+
+Comment: "keybind"
+
+Selection:
+>The Awakening Sequence:
+  
+  
+  Domain Inversion (Monochrome Shader):
+  
+  
+  The entire world desaturates into high-contrast monochrome (pure black, stark white, and falling silver rain).
+  Only Nihility Crimson and Void Violet retain intense, emissive color.
+  World-scale hitstop / time slow for dramatic weight.
+  
+  Emancipator Form (NaughtUltBlade.png):
+  
+  
+  The player draws the awakened glowing crimson blade (NaughtUltBlade.png).
+  Hair turns silver-white, red eyes flare.
+  
+  Phase 1: Rainblade (斩雨 ×3):
+  
+  
+  3 rapid, player-directed dimensional slashes across the screen.
+  Each Rainblade automatically targets and detonates up to 3 Crimson Knots from enemies, triggering expanding shockwaves and raining bloody blossom needles.
+  
+  Phase 2: Stygian Resurge (黄泉回渡):
+  
+  
+  A breathless silence (audio ducks to pure silence for 0.4s).
+  Acheron clicks the tsuba shut.
+  A screen-spanning diagonal tear slashes across the screen, dealing catastrophic True Melee damage, bypassing all defense and penetrating 50% DR.
+  All Crimson Knots are purged.
+
+Comment: "this has to hit hard, but not too hard, hit harder than onikiri's ultimate move Execute but not so hard that it trivializes boss phases since the condition is really dependent on outside factors, not just "hit enemy, bar go up, consume bar"
+see all four of COver's legendary weapons' domain to implement the visuals, onikiri's screen slash effect for the slashes, the final one should slash the screen in half (create new if it doesn't exist in COver yet or if reuse is good enough, reuse)"
+
+Selection:
+>Debuff Synergy: Any time an enemy is inflicted with a debuff (vanilla debuffs like Shadowflame, Ichor, Cursed Inferno, Electrified, or Calamity debuffs like Miracle Blight, Whispering Death, God Slayer Inferno), Acheron gains 1 Slashed Dream and applies 1 Crimson Knot (cooldown: 0.75s per trigger).
+
+Comment: "Terraria has a debuff bool in the definition of all types of buffs, use it to determine whether one is a debuff.
+the cooldown should definitely be longer and the cooldown is tracked on each debuff type instead of universal application"
+
+Selection:
+>Knot Inheritance: When any marked enemy dies, their Crimson Knots erupt into crimson butterfly particles that home onto the enemy with the highest HP, preserving all stacks for the boss/miniboss.
+
+Comment: "just use a beam to spread it right now"
+
+Selection:
+>Knot HUD: Floating above each marked enemy is an ethereal crimson knot/petals indicator (1 to 9).
+
+Comment: "ask me to provide a sprite when you implement this"
+
+Selection:
+>Overworld Insta-Kill (Trash Mobs):
+  
+  
+  Striking regular low-tier enemies (zombies, bats, slimes, non-boss minions) instantly executes them in a single dimensional flash-cut without knockback or battle delay, dropping their loot immediately.
+
+Comment: "overpowered, remove"
+
+Selection:
+>Charm / TraceHSR OriginTerraria FunctionalityMark of the Red Oni (赤鬼)Bonus Trace 1Start combat with 5 Slashed Dream & 5 Crimson Knots on the nearest foe. Enables up to 3 overflow charges.Grip of the Abyss (奈落)Bonus Trace 2Slashes deal +15% / +30% / +45% increased damage based on the number of unique debuffs afflicting the target.Thunder Core (雷心)Bonus Trace 3Rainblade hits grant stacking +10% True Melee damage (max 30%). Stygian Resurge calls down 6 extra dimensional thunder strikes on random targets.Silent Sky (E1)Eidolon 1Striking enemies afflicted with any debuff grants +18% True Melee Crit Chance and +25% Crit Damage.Mute Thunder (E2)Eidolon 2Passively generates 1 Slashed Dream every 5 seconds in combat and marks the strongest enemy with 1 Crimson Knot.Decoy Resonance (Phantom Echo)New (Clone Synergy)Modifies the Right-Click shadow clone: When the clone expires or when Acheron casts Ult, the clone draws its blade and performs an echo slice, inflicting 3 Crimson Knots.Apocalypse, the Emancipator (E6)Eidolon 6All combo swings are considered Ultimate DMG, gaining 20% All-Type Resistance Penetration and permanently ignoring defense shields.
+
+Comment: "Trace 1 should be start with 5 slashed dream on spawn, enable up to 3 overflow charges
+Trace 2 numbers should be lowered quite a bit for calamity, add a toggle or something, there are a lot of debuffs in calamity overhaul
+Eidolon 1 +18% true melee crit  chance is enough
+Eidolon 2 should be every 9 seconds
+Clone synergy is ok
+Eidolon 6 is way too powerful, remove the ignore defense shields part, make it 20% def penetration also, the all swings considered ultimate damage is subject to change, depends on how we are going to make the charms. Eidolons should be given at major breakpoints, with E6 at moon lord, e2 at wall of flesh, where should e1 be?"
+
+Selection:
+>Slashed Dream Gauge (UI):
+  
+  Placed near the player or hotbar: A curved crescent arc displaying 9 glowing crimson-black droplets/petals.
+  At 9/9, the gauge pulses with electric violet lightning, accompanied by a soft blade chime signaling the Ultimate is primed.
+
+Comment: "place it at where the hud for legendary weapons in COverhaul are at, look at their code and imitate it, tell me to provide assets (this is hud so it can be something else not necessarily a sprite)"
+
+Selection:
+>Crimson Knot Indicators:
+  
+  Small circular Nihility sigils above enemies with glowing red tick marks indicating stacks (1 through 9).
+
+Comment: "tell me to provide assets"
+<USER_REQUEST>
+report to me what you learned from my comments before proceeding
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-11-24T00:45:33+07:00.
+</ADDITIONAL_METADATA>
