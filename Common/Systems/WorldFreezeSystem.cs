@@ -7,6 +7,7 @@ using Terraria;
 using Terraria.ModLoader;
 using WeepForTheDeparted.Common.GlobalNPCs;
 using WeepForTheDeparted.Content.Projectiles;
+using WeepForTheDeparted.Content.Projectiles.Charms;
 
 namespace WeepForTheDeparted.Common.Systems
 {
@@ -143,7 +144,9 @@ namespace WeepForTheDeparted.Common.Systems
 				|| type == ModContent.ProjectileType<NaughtDash>()
 				|| type == ModContent.ProjectileType<NaughtDashTrail>()
 				|| type == ModContent.ProjectileType<NaughtClone>()
-				|| type == ModContent.ProjectileType<CrimsonKnotTransferBeam>();
+				|| type == ModContent.ProjectileType<CrimsonKnotTransferBeam>()
+				|| type == ModContent.ProjectileType<MirageWeftThread>()
+				|| type == ModContent.ProjectileType<BloodLotusShockwave>();
 		}
 	}
 }

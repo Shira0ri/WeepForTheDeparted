@@ -15,10 +15,193 @@ namespace WeepForTheDeparted.Common.Systems
 	public class BossTrackerSystem : ModSystem
 	{
 		public static HashSet<string> DefeatedBosses { get; private set; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		public static bool DefeatedPostMoonLordBoss { get; private set; } = false;
+
+		private static readonly string[] CalamityPostMoonLordFlags =
+		{
+			"downedGuardians",
+			"downedDragonfolly",
+			"downedProvidence",
+			"downedCeaselessVoid",
+			"downedStormWeaver",
+			"downedSignus",
+			"downedPolterghast",
+			"downedBoomerDuke",
+			"downedDoG",
+			"downedYharon",
+			"downedExoMechs",
+			"downedCalamitas",
+			"downedPrimordialWyrm",
+			"downedBossRush"
+		};
 
 		public override void ClearWorld()
 		{
 			DefeatedBosses.Clear();
+			DefeatedPostMoonLordBoss = false;
+		}
+
+		public static bool HasPostMoonLordContentMod =>
+			WeepCompatibility.HasCalamity
+			|| ModLoader.HasMod("CalamityMod")
+			|| ModLoader.HasMod("FargowiltasSouls")
+			|| ModLoader.HasMod("ThoriumMod")
+			|| ModLoader.HasMod("StarsAbove")
+			|| ModLoader.HasMod("CatalystMod")
+			|| ModLoader.HasMod("NoxusBoss")
+			|| ModLoader.HasMod("Redemption");
+
+		public static bool HasDefeatedPostMoonLordBoss
+		{
+			get
+			{
+				if (DefeatedPostMoonLordBoss)
+					return true;
+
+				if (WeepCompatibility.HasCalamity && HasAnyCalamityPostMoonLordBossDowned())
+					return true;
+
+				return false;
+			}
+		}
+
+		public static void MarkPostMoonLordBossDefeated()
+		{
+			if (DefeatedPostMoonLordBoss)
+				return;
+
+			DefeatedPostMoonLordBoss = true;
+			if (Main.netMode == NetmodeID.Server)
+			{
+				NetMessage.SendData(MessageID.WorldData);
+			}
+		}
+
+		private static bool HasAnyCalamityPostMoonLordBossDowned()
+		{
+			if (!ModLoader.TryGetMod("CalamityMod", out Mod calamity))
+				return false;
+
+			try
+			{
+				Type downedSystem = calamity.Code?.GetType("CalamityMod.DownedBossSystem");
+				if (downedSystem == null)
+					return false;
+
+				for (int i = 0; i < CalamityPostMoonLordFlags.Length; i++)
+				{
+					FieldInfo field = downedSystem.GetField(CalamityPostMoonLordFlags[i], BindingFlags.Public | BindingFlags.Static);
+					if (field != null && field.FieldType == typeof(bool) && field.GetValue(null) is bool isDowned && isDowned)
+					{
+						return true;
+					}
+				}
+			}
+			catch
+			{
+				// Fail silently if Calamity internal structure differs
+			}
+
+			return false;
+		}
+
+		public static bool IsCharmUnlocked(string charmId)
+		{
+			if (string.IsNullOrEmpty(charmId))
+				return true;
+
+			if (ModContent.GetInstance<WeepConfig>()?.UnlockAllInscriptionsAndEidolons == true)
+				return true;
+
+			return charmId switch
+			{
+				// Starters
+				"RedOni" or "AbyssGrip" or "ThunderCore" => true,
+
+				// Pre-Hardmode
+				"NamelessDecoy" => NPC.downedSlimeKing,
+				"FleetingStep" => NPC.downedBoss1,
+				"BloodLotus" => NPC.downedBoss2,
+				"DepartedSiphon" => NPC.downedQueenBee,
+				"BladesongRain" => NPC.downedBoss3,
+				"WitheredRiver" => Main.hardMode,
+
+				// Early-Mid Hardmode
+				"VoidHorizon" => NPC.downedQueenSlime,
+				"MirageWeft" => NPC.downedMechBoss1,
+				"ShadowMarionette" => NPC.downedMechBoss2,
+				"KarmaSever" => NPC.downedMechBoss3,
+
+				// Late Hardmode
+				"Rainleaf" => NPC.downedPlantBoss,
+				"ShadowCrucible" => NPC.downedGolemBoss,
+				"EmancipatorWill" => NPC.downedFishron,
+				"StillWater" => NPC.downedEmpressOfLight,
+				"SynchronizedExecution" => NPC.downedAncientCultist,
+
+				_ => false
+			};
+		}
+
+		public static bool IsEidolonUnlocked(int index)
+		{
+			if (ModContent.GetInstance<WeepConfig>()?.UnlockAllInscriptionsAndEidolons == true)
+				return true;
+
+			return index switch
+			{
+				0 => NPC.downedBoss2,        // E1: EoW / BoC
+				1 => Main.hardMode,          // E2: Wall of Flesh
+				2 => NPC.downedMechBossAny,  // E3: Any Mechanical Boss
+				3 => NPC.downedPlantBoss,    // E4: Plantera
+				4 => NPC.downedGolemBoss,    // E5: Golem
+				5 => NPC.downedMoonlord,     // E6: Moon Lord
+				6 => HasPostMoonLordContentMod
+					? HasDefeatedPostMoonLordBoss
+					: NPC.downedMoonlord,    // EX: First Post-ML Boss (or Moon Lord in Vanilla)
+				_ => false
+			};
+		}
+
+		public static string GetCharmUnlockHint(string charmId)
+		{
+			return charmId switch
+			{
+				"RedOni" or "AbyssGrip" or "ThunderCore" => "Unsealed at journey's start",
+				"NamelessDecoy" => "Defeat King Slime to unseal",
+				"FleetingStep" => "Defeat Eye of Cthulhu to unseal",
+				"BloodLotus" => "Defeat Eater of Worlds or Brain of Cthulhu to unseal",
+				"DepartedSiphon" => "Defeat Queen Bee to unseal",
+				"BladesongRain" => "Defeat Skeletron to unseal",
+				"WitheredRiver" => "Defeat Wall of Flesh to unseal",
+				"VoidHorizon" => "Defeat Queen Slime to unseal",
+				"MirageWeft" => "Defeat The Destroyer to unseal",
+				"ShadowMarionette" => "Defeat The Twins to unseal",
+				"KarmaSever" => "Defeat Skeletron Prime to unseal",
+				"Rainleaf" => "Defeat Plantera to unseal",
+				"ShadowCrucible" => "Defeat Golem to unseal",
+				"EmancipatorWill" => "Defeat Duke Fishron to unseal",
+				"StillWater" => "Defeat Empress of Light to unseal",
+				"SynchronizedExecution" => "Defeat Lunatic Cultist to unseal",
+				_ => "Sealed by world progression"
+			};
+		}
+
+		public static string GetEidolonUnlockHint(int index)
+		{
+			return index switch
+			{
+				0 => "Defeat Eater of Worlds or Brain of Cthulhu to unseal",
+				1 => "Defeat Wall of Flesh to unseal",
+				2 => "Defeat any Mechanical Boss to unseal",
+				3 => "Defeat Plantera to unseal",
+				4 => "Defeat Golem to unseal",
+				5 => "Defeat Moon Lord to unseal",
+				6 => HasPostMoonLordContentMod
+					? "Defeat a Post-Moon Lord Boss to unseal"
+					: "Defeat Moon Lord to unseal",
+				_ => "Sealed by world progression"
+			};
 		}
 
 		public static void RegisterDefeatedBoss(NPC npc)
@@ -197,6 +380,7 @@ namespace WeepForTheDeparted.Common.Systems
 		public override void SaveWorldData(TagCompound tag)
 		{
 			tag["DefeatedBosses"] = DefeatedBosses.ToList();
+			tag["DefeatedPostMoonLordBoss"] = DefeatedPostMoonLordBoss;
 		}
 
 		public override void LoadWorldData(TagCompound tag)
@@ -205,10 +389,15 @@ namespace WeepForTheDeparted.Common.Systems
 			{
 				DefeatedBosses = new HashSet<string>(tag.GetList<string>("DefeatedBosses"), StringComparer.OrdinalIgnoreCase);
 			}
+
+			DefeatedPostMoonLordBoss = tag.ContainsKey("DefeatedPostMoonLordBoss") && tag.GetBool("DefeatedPostMoonLordBoss");
 		}
 
 		public override void NetSend(BinaryWriter writer)
 		{
+			BitsByte flags = new BitsByte(DefeatedPostMoonLordBoss);
+			writer.Write(flags);
+
 			writer.Write(DefeatedBosses.Count);
 			foreach (string boss in DefeatedBosses)
 			{
@@ -218,6 +407,9 @@ namespace WeepForTheDeparted.Common.Systems
 
 		public override void NetReceive(BinaryReader reader)
 		{
+			BitsByte flags = reader.ReadByte();
+			DefeatedPostMoonLordBoss = flags[0];
+
 			DefeatedBosses.Clear();
 			int count = reader.ReadInt32();
 			for (int i = 0; i < count; i++)

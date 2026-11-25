@@ -80,6 +80,9 @@ namespace WeepForTheDeparted.Common.UI
 
 			// Active when holding Naught
 			bool holdingNaught = player.HeldItem?.type == ModContent.ItemType<Naught>();
+			bool ledgerBlocking = NihilityLedgerUI.Instance != null
+				&& (NihilityLedgerUI.Instance.IsOpen || NihilityLedgerUI.Instance.OpenProgress.Current > 0.01f);
+
 			if (holdingNaught)
 			{
 				if (!IsOpen)
@@ -91,16 +94,20 @@ namespace WeepForTheDeparted.Common.UI
 					}
 				}
 
-				// Clicking on the HUD opens the Nihility Ledger
-				Vector2 mouse = new Vector2(Main.mouseX, Main.mouseY);
-				if (Vector2.Distance(mouse, NaturalAnchor) <= 45f && Main.mouseLeft && Main.mouseLeftRelease)
+				// Clicking on the HUD opens the Nihility Ledger (only when Ledger is not open)
+				if (!ledgerBlocking)
 				{
-					if (NihilityLedgerUI.Instance != null)
+					Vector2 mouse = new Vector2(Main.mouseX, Main.mouseY);
+					if (Vector2.Distance(mouse, NaturalAnchor) <= 45f && Main.mouseLeft && Main.mouseLeftRelease)
 					{
-						if (NihilityLedgerUI.Instance.IsOpen)
-							NihilityLedgerUI.Instance.Close();
-						else
-							NihilityLedgerUI.Instance.Open();
+						if (NihilityLedgerUI.Instance != null)
+						{
+							if (NihilityLedgerUI.Instance.IsOpen)
+								NihilityLedgerUI.Instance.Close();
+							else
+								NihilityLedgerUI.Instance.Open();
+							Main.mouseLeftRelease = false;
+						}
 					}
 				}
 			}
@@ -119,6 +126,13 @@ namespace WeepForTheDeparted.Common.UI
 
 			if (IsOpen && alpha < 0.15f)
 				alpha = 0.15f;
+
+			float ledgerOcclusion = NihilityLedgerUI.Instance != null
+				? MathHelper.Clamp(NihilityLedgerUI.Instance.IsOpen ? Math.Max(0.25f, NihilityLedgerUI.Instance.OpenProgress.Current) : NihilityLedgerUI.Instance.OpenProgress.Current, 0f, 1f)
+				: 0f;
+			alpha *= 1f - ledgerOcclusion;
+			if (alpha <= 0.005f)
+				return;
 
 			Player player = Main.LocalPlayer;
 			if (player == null || !player.active)
@@ -229,8 +243,11 @@ namespace WeepForTheDeparted.Common.UI
 			// 5. Draw Status & Text
 			DrawStatusText(spriteBatch, anchor, alpha, naughtPlayer, isPrimed, pulseTimer);
 
-			// 6. Handle Hover & Tooltip
-			HandleHoverTooltip(anchor, naughtPlayer, isPrimed);
+			// 6. Handle Hover & Tooltip (suppressed while Nihility Ledger is open)
+			if (ledgerOcclusion <= 0.01f)
+			{
+				HandleHoverTooltip(anchor, naughtPlayer, isPrimed);
+			}
 		}
 
 		private void DrawOverflowNumber(SpriteBatch spriteBatch, Vector2 anchor, float alpha, int overflowCount, float pulseTimer)
@@ -267,6 +284,15 @@ namespace WeepForTheDeparted.Common.UI
 				: new Color(215, 160, 255);
 
 			Utils.DrawBorderStringFourWay(spriteBatch, font, countStr, countPos.X, countPos.Y, textColor * alpha, Color.Black * (alpha * 0.9f), Vector2.Zero, 0.82f);
+
+			if (naughtPlayer.IsEmancipatorCritActive)
+			{
+				string critStr = $"+20% CRIT {naughtPlayer.EmancipatorCritBuffTimer / 60f:0.0}s";
+				Vector2 critSize = font.MeasureString(critStr) * 0.72f;
+				Vector2 critPos = anchor + new Vector2(0f, 70f) - critSize * 0.5f;
+				Color critColor = Color.Lerp(new Color(255, 70, 95), new Color(255, 210, 100), (float)Math.Sin(pulseTimer * 6f) * 0.5f + 0.5f);
+				Utils.DrawBorderStringFourWay(spriteBatch, font, critStr, critPos.X, critPos.Y, critColor * alpha, Color.Black * (alpha * 0.9f), Vector2.Zero, 0.72f);
+			}
 		}
 
 		private void HandleHoverTooltip(Vector2 anchor, NaughtPlayer naughtPlayer, bool isPrimed)
@@ -279,8 +305,13 @@ namespace WeepForTheDeparted.Common.UI
 				Main.LocalPlayer.mouseInterface = true;
 
 				string tooltip = isPrimed
-					? $"Slashed Dream: {naughtPlayer.SlashedDream}/9 [PRIMED]\nReady to unleash: Slashed Dream Cries in Red\nInflict debuffs or cycle clones to charge.\n[Click to open Nihility Ledger (Charms & Eidolons)]"
-					: $"Slashed Dream: {naughtPlayer.SlashedDream}/9\nOverflow Charges: {naughtPlayer.OverflowDream}/3\nReaches 9 to prime Ultimate.\nInflict debuffs or cycle clones to charge.\n[Click to open Nihility Ledger (Charms & Eidolons)]";
+					? $"Slashed Dream: {naughtPlayer.SlashedDream}/9 [PRIMED]\nOverflow Charges: {naughtPlayer.OverflowDream}/{naughtPlayer.CurrentMaxOverflowDream}\nReady to unleash: Slashed Dream Cries in Red\nInflict debuffs or cycle clones to charge.\n[Click to open Nihility Ledger (Charms & Eidolons)]"
+					: $"Slashed Dream: {naughtPlayer.SlashedDream}/9\nOverflow Charges: {naughtPlayer.OverflowDream}/{naughtPlayer.CurrentMaxOverflowDream}\nReaches 9 to prime Ultimate.\nInflict debuffs or cycle clones to charge.\n[Click to open Nihility Ledger (Charms & Eidolons)]";
+
+				if (naughtPlayer.IsEmancipatorCritActive)
+				{
+					tooltip += $"\nSevered Will: +20% True Melee Crit ({naughtPlayer.EmancipatorCritBuffTimer / 60f:0.0}s)";
+				}
 
 				Main.instance.MouseText(tooltip);
 			}

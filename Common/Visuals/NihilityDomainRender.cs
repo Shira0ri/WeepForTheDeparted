@@ -102,8 +102,9 @@ namespace WeepForTheDeparted.Common.Visuals
 
 			Vector2 screenSize = new Vector2(Main.screenWidth, Main.screenHeight);
 
-			// Wave 2: Ultimate Terrain Darkening Wave (3.0s, expanding from player to unrender terrain)
-			bool ultWaveActive = NihilityDomainSystem.UltWaveActive && NihilityDomainSystem.UltWaveProgress < 0.98f;
+			// Wave 2: Ultimate Terrain Darkening Wave (expands on unsheath, contracts on sheath to restore terrain)
+			bool ultWaveActive = (NihilityDomainSystem.UltWaveActive && NihilityDomainSystem.UltWaveProgress < 0.98f)
+				|| NihilityDomainSystem.UltWaveClosingActive;
 			Vector2 ultScreenPos = NihilityDomainSystem.UltWaveOrigin - Main.screenPosition;
 			Vector2 ultUV = new Vector2(ultScreenPos.X / screenSize.X, ultScreenPos.Y / screenSize.Y);
 			float ultRadiusNorm = NihilityDomainSystem.UltWaveRadius / screenSize.Y;

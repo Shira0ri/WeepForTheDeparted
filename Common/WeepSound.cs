@@ -22,6 +22,11 @@ namespace WeepForTheDeparted.Common
 		public static readonly SoundStyle KatanaSprint = new SoundStyle("WeepForTheDeparted/Assets/Sounds/KatanaSprint");
 
 		// Acheron (Honkai: Star Rail) Ultimate Slash Sounds: Heavy sub-bass impact, crisp metallic razor bite & dimensional chime
+		public static readonly SoundStyle AcheronUnsheath = new SoundStyle("WeepForTheDeparted/Assets/Sounds/AcheronUnsheath")
+		{
+			Volume = 1.0f,
+			MaxInstances = 2
+		};
 		public static readonly SoundStyle AcheronWindup = new SoundStyle("WeepForTheDeparted/Assets/Sounds/AcheronWindup")
 		{
 			Volume = 0.95f,
@@ -49,6 +54,17 @@ namespace WeepForTheDeparted.Common
 		{
 			Volume = 1.30f,
 			MaxInstances = 2
+		};
+		public static readonly SoundStyle AcheronSheath = new SoundStyle("WeepForTheDeparted/Assets/Sounds/AcheronSheath")
+		{
+			Volume = 1.0f,
+			MaxInstances = 2
+		};
+		public static readonly SoundStyle AcheronUltMusic = new SoundStyle("WeepForTheDeparted/Assets/Sounds/AcheronUltMusic", SoundType.Music)
+		{
+			Volume = 0.85f,
+			MaxInstances = 1,
+			SoundLimitBehavior = SoundLimitBehavior.ReplaceOldest
 		};
 	}
 }

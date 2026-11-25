@@ -10,6 +10,7 @@ namespace WeepForTheDeparted.Common.GlobalProjectiles
 		public override bool InstancePerEntity => true;
 
 		private bool wasFrozen = false;
+		public bool IsFrozen => wasFrozen;
 		private Vector2 frozenPosition = Vector2.Zero;
 		private Vector2 resumeVelocity = Vector2.Zero;
 		private float frozenRotation;

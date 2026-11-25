@@ -11,12 +11,22 @@ namespace WeepForTheDeparted.Common.Visuals
 		private static Player dummy;
 		private static bool tintActive;
 		private static Color activeTint;
+		private static bool ultGhostActive;
+		private static Vector2 ultGhostTargetScreen;
+		private static float ultGhostScaleX;
+		private static float ultGhostScaleY;
+		private static float ultGhostLeanShear;
+		private static float ultGhostBodyTilt;
+		private static Color ultGhostInkColor;
+		private static float ultGhostTintStrength;
+		private static float ultGhostAlpha;
 
 		public override void OnModUnload()
 		{
 			dummy = null;
 			tintActive = false;
 			activeTint = default;
+			ultGhostActive = false;
 		}
 
 		public static void Prepare(Player owner)
@@ -127,7 +137,78 @@ namespace WeepForTheDeparted.Common.Visuals
 		internal static bool TryGetActiveTint(Player player, out Color tint)
 		{
 			tint = activeTint;
-			return tintActive && ReferenceEquals(player, dummy);
+			return (tintActive || ultGhostActive) && ReferenceEquals(player, dummy);
+		}
+
+		internal static bool TryGetActiveUltGhostTransform(
+			Player player,
+			out Vector2 targetScreen,
+			out float scaleX,
+			out float scaleY,
+			out float leanShear,
+			out float bodyTilt,
+			out Color inkColor,
+			out float tintStrength,
+			out float alpha)
+		{
+			if (ultGhostActive && ReferenceEquals(player, dummy))
+			{
+				targetScreen = ultGhostTargetScreen;
+				scaleX = ultGhostScaleX;
+				scaleY = ultGhostScaleY;
+				leanShear = ultGhostLeanShear;
+				bodyTilt = ultGhostBodyTilt;
+				inkColor = ultGhostInkColor;
+				tintStrength = ultGhostTintStrength;
+				alpha = ultGhostAlpha;
+				return true;
+			}
+
+			targetScreen = default;
+			scaleX = 1f;
+			scaleY = 1f;
+			leanShear = 0f;
+			bodyTilt = 0f;
+			inkColor = Color.White;
+			tintStrength = 0f;
+			alpha = 1f;
+			return false;
+		}
+
+		public static void DrawPreparedUltAfterimage(
+			Player owner,
+			Vector2 projectedCenterWorld,
+			float perspScale,
+			in UltAfterimage3D ghost,
+			Color inkColor,
+			float tintStrength,
+			float alpha)
+		{
+			if (dummy == null || owner == null || Main.dedServ)
+				return;
+
+			// Anchor dummy at owner.position for bright world lighting lookup, then transform into 2.5D projected screen coords
+			ApplyPose(owner.position, ghost.DrawDirection, owner.gravDir, owner.bodyFrame, owner.legFrame, 0f, Vector2.Zero);
+
+			Ult3DProjection.ComputeAnisotropicScale(perspScale, ghost.WidthScale, ghost.SquashY, ghost.StretchDir2D, ghost.StretchAmount, out float sx, out float sy);
+
+			ultGhostTargetScreen = projectedCenterWorld - Main.screenPosition;
+			ultGhostScaleX = sx;
+			ultGhostScaleY = sy;
+			ultGhostLeanShear = ghost.LeanShear;
+			ultGhostBodyTilt = ghost.BodyTilt;
+			ultGhostInkColor = inkColor;
+			ultGhostTintStrength = tintStrength;
+			ultGhostAlpha = alpha;
+			ultGhostActive = true;
+			try
+			{
+				Main.PlayerRenderer.DrawPlayer(Main.Camera, dummy, dummy.position, 0f, Vector2.Zero);
+			}
+			finally
+			{
+				ultGhostActive = false;
+			}
 		}
 	}
 
@@ -135,6 +216,33 @@ namespace WeepForTheDeparted.Common.Visuals
 	{
 		public override void TransformDrawData(ref PlayerDrawSet drawInfo)
 		{
+			if (PlayerCloneRenderer.TryGetActiveUltGhostTransform(
+				drawInfo.drawPlayer,
+				out Vector2 targetScreen,
+				out float scaleX,
+				out float scaleY,
+				out float leanShear,
+				out float bodyTilt,
+				out Color inkColor,
+				out float tintStrength,
+				out float ghostAlpha))
+			{
+				Vector2 sourceCenterScreen = drawInfo.drawPlayer.MountedCenter - Main.screenPosition;
+				Ult3DProjection.TransformPlayerDrawData(
+					ref drawInfo,
+					sourceCenterScreen,
+					targetScreen,
+					scaleX,
+					scaleY,
+					leanShear,
+					bodyTilt,
+					inkColor,
+					tintStrength,
+					ghostAlpha,
+					minOpaqueFloor: 0.75f);
+				return;
+			}
+
 			if (!PlayerCloneRenderer.TryGetActiveTint(drawInfo.drawPlayer, out Color tint))
 				return;
 

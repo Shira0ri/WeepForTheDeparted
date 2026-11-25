@@ -4,11 +4,9 @@ using InnoVault;
 using InnoVault.PRT;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
-using ReLogic.Content;
+using ReLogic.Utilities;
 using Terraria;
 using Terraria.Audio;
-using Terraria.DataStructures;
-using Terraria.GameContent;
 using Terraria.Graphics.CameraModifiers;
 using Terraria.ID;
 using Terraria.ModLoader;
@@ -16,12 +14,9 @@ using WeepForTheDeparted.Common;
 using WeepForTheDeparted.Common.GlobalNPCs;
 using WeepForTheDeparted.Common.Players;
 using WeepForTheDeparted.Common.Systems;
-using WeepForTheDeparted.Common.UI.NihilityLedger;
 using WeepForTheDeparted.Common.Visuals;
 using WeepForTheDeparted.Common.Visuals.Dismember;
-using WeepForTheDeparted.Content.Items.Weapons;
 using WeepForTheDeparted.Content.Projectiles.Charms;
-using WeepForTheDeparted.Content.Shaders;
 using WeepForTheDeparted.Content.Visuals.Particles;
 
 namespace WeepForTheDeparted.Content.Projectiles
@@ -39,12 +34,11 @@ namespace WeepForTheDeparted.Content.Projectiles
 		}
 
 		// Slashing stages:
-		// 0: Unsheathing stance (1 second = 60 frames)
+		// 0: Unsheathing stance (240 frames) -> Ready Zanshin stance
 		// 1: Rainblade 1 executed
 		// 2: Rainblade 2 executed
 		// 3: Rainblade 3 executed
 		// 4: Stygian Resurge (finale) executed
-		// 5: Finished
 		public int SlashStage
 		{
 			get => (int)Projectile.ai[1];
@@ -60,17 +54,21 @@ namespace WeepForTheDeparted.Content.Projectiles
 
 		private int slashCooldown = 0;
 		private int holdTimer = 0;
-		private int postResurgeTimer = 0;
-		private float lastSlashAngle = -999f;
 
-		// Swing animation state
+		// Active 3D choreography state
 		private bool isSwinging = false;
 		private int swingTimer = 0;
 		private int swingDuration = 34;
-		private float swingStartAngle = 0f;
-		private float swingEndAngle = 0f;
-		private int swingType = 0; // 0 = diagonal, 1 = rising, 2 = horizontal sideways, 3 = resurge
-		private float swingImpactProgress = 0.35f;
+		private int swingType = 0; // 0 = Rainblade 1, 1 = Rainblade 2, 2 = Rainblade 3, 3 = Stygian Resurge
+		private int prePhaseEndTick = 12;
+		private int coilEndTick = 17;
+		private int blurEndTick = 20;
+		private bool preRibbonSpawned = false;
+		private bool windupAudioPlayed = false;
+		private bool realRibbonSpawned = false;
+		private bool resurgeWindupFlashSpawned = false;
+		private UltCoord3D stageStartPos3D = UltCoord3D.Zero;
+		private float stageStartLean = 0f;
 
 		// Pending delayed impact strike state
 		private bool hasPendingStrike = false;
@@ -78,20 +76,72 @@ namespace WeepForTheDeparted.Content.Projectiles
 		private float pendingStrikeAngle = 0f;
 		private float pendingStrikeTilt = 0f;
 		private int impactDelayTimer = 0;
+		private bool hasPendingPreemptiveStrike = false;
+		private int preemptiveStrikeStage = 0;
+		private float preemptiveStrikeAngle = 0f;
+		private int preemptiveDelayTimer = 0;
+		private bool preemptiveHitDone = false;
 		private int hitstopFrames = 0;
 
-		// Reverse sheathing animation state after final slash
+		// Reverse sheathing animation state after final slash (synced to AcheronSheath.ogg: 3.74s total, middle silence 2.57s..3.10s, climax peak @ 3.57s = 214t)
 		private bool isSheathing = false;
 		private int sheathTimer = 0;
-		public const int SheathDuration = 120; // 2.0 seconds authentic reverse sheathing
-		public const int SheathPostDelay = 60; // 1.0 second delay after sheathing finishes before damage & snap-back
-		public const int SheathFinishDelay = 25; // 0.4 seconds post-damage linger before concluding
+		public const int SheathSlideDuration = 154;
+		public const int SheathGleamDuration = 20;
+		public const int SheathPostDelay = 60;
+		public const int SheathFinishDelay = 25;
+		public const float ResurgeDamageMultiplier = 6.0f;
+		public const float SiphonHealPerKnot = 0.02f;
+		public const int MaxSiphonKnotsPerUlt = 9;
 		private bool sheathClickDone = false;
 		private bool sheathDamageDone = false;
+		private UltCoord3D sheathStartPos3D = UltCoord3D.Zero;
+		private float sheathStartLean = 0f;
+		private const int UltMusicFadeOutTicks = 30;
+		private SlotId ultMusicSlot = SlotId.Invalid;
+		private float ultMusicFade = 1f;
 
-		// Absolute freeze anchor in world space
+		// Absolute freeze anchor in world space (player never moves physically into tiles)
 		private Vector2 freezePosition = Vector2.Zero;
 		private bool hasSetFreezePos = false;
+
+		// 3D Coordinate Anchor & Virtual Transform (read by Ult3DRenderHandle)
+		public Vector2 UltOrigin { get; private set; }
+		public Vector2 SafeFrameOrigin { get; private set; }
+		public int LockedFacingDir { get; private set; } = 1;
+
+		public UltCoord3D PlayerPos3D { get; private set; } = UltCoord3D.Zero;
+		public UltCoord3D PlayerVel3D { get; private set; } = UltCoord3D.Zero;
+		public float PlayerLeanShear { get; private set; } = 0f;
+		public float PlayerBodyTilt { get; private set; } = 0f;
+		public float PlayerWidthScale { get; private set; } = 1f;
+		public float PlayerSquashY { get; private set; } = 1f;
+		public Vector2 PlayerStretchDir2D { get; private set; } = Vector2.UnitX;
+		public float PlayerStretchAmount { get; private set; } = 0f;
+		public int VisualDrawDirection { get; private set; } = 1;
+
+		public UltCoord3D Hilt3D { get; private set; } = UltCoord3D.Zero;
+		public UltCoord3D Tip3D { get; private set; } = new(120f, 0f, 0f);
+		public UltCoord3D BladeBroadsideNormal3D { get; private set; } = new(0f, 1f, 0f);
+		public float BladeMidZ => (Hilt3D.Z + Tip3D.Z) * 0.5f;
+		public float BladeGlowIntensity { get; private set; } = 0.25f;
+		public bool IsSheathPoseActive => Timer <= UnsheathDuration || isSheathing;
+		public float CurrentSheathSlideDist { get; private set; } = 0f;
+
+		private UltCoord3D prevHilt3D = UltCoord3D.Zero;
+		private UltCoord3D prevTip3D = UltCoord3D.Zero;
+		private bool hasPrevBladePose = false;
+		private int readyStanceTicks = 0;
+
+		public readonly List<UltAfterimage3D> Afterimages = new();
+		public readonly List<UltBladeGhost3D> BladeGhosts = new();
+		public readonly List<UltWaterRipple3D> WaterRipples = new();
+		public readonly List<UltSlashRibbon3D> ActiveRibbons = new();
+		public readonly List<UltCleaveSeam3D> ActiveSeams = new();
+		public readonly List<UltGleamFlash3D> ActiveGleams = new();
+
+		private const float BaseBladeLength3D = 156f;
+		private const float WaterPlaneU = -21f;
 
 		private struct PendingResurgeHit
 		{
@@ -99,43 +149,10 @@ namespace WeepForTheDeparted.Content.Projectiles
 			public int Damage;
 			public int DetonatedKnots;
 		}
-		private readonly List<PendingResurgeHit> pendingResurgeHits = new List<PendingResurgeHit>();
+
+		private readonly List<PendingResurgeHit> pendingResurgeHits = new();
 		private int totalKnotsDetonatedInUlt = 0;
-
-		// Track screen slash lines for rendering
-		private readonly struct SlashRecord
-		{
-			public readonly Vector2 Start;
-			public readonly Vector2 End;
-			public readonly int SpawnFrame;
-			public readonly Color Col;
-
-			public SlashRecord(Vector2 start, Vector2 end, int spawnFrame, Color col)
-			{
-				Start = start;
-				End = end;
-				SpawnFrame = spawnFrame;
-				Col = col;
-			}
-		}
-
-		private readonly List<SlashRecord> activeSlashes = new List<SlashRecord>();
-
-		// 3D Crescent Slash Arcs rendered via OniCrimsonSlash shader
-		private struct ActiveSlashArc
-		{
-			public Vector2 Center;
-			public float Rotation;
-			public float Radius;
-			public float ArcSpan;
-			public int Type;
-			public int Timer;
-			public int MaxTime;
-			public float Flip;
-			public float TiltX;
-		}
-
-		private readonly List<ActiveSlashArc> activeArcs = new List<ActiveSlashArc>();
+		private int siphonHealedHpInUlt = 0;
 
 		public override void SetDefaults()
 		{
@@ -149,8 +166,10 @@ namespace WeepForTheDeparted.Content.Projectiles
 			Projectile.penetrate = -1;
 			Projectile.DamageType = WeepCompatibility.TrueMelee;
 			Projectile.scale = 1f;
-			Projectile.timeLeft = UnsheathDuration + MaxSlashingTime + 300;
+			Projectile.timeLeft = UnsheathDuration + MaxSlashingTime + 400;
 		}
+
+		public override bool? CanDamage() => false;
 
 		public override void AI()
 		{
@@ -165,101 +184,132 @@ namespace WeepForTheDeparted.Content.Projectiles
 
 			Timer++;
 			Owner.heldProj = Projectile.whoAmI;
+			var naughtPlayer = Owner.GetModPlayer<NaughtPlayer>();
 
-			// Lock initial freeze position on activation
+			// Lock initial freeze position, 3D origin, facing axis, and camera anchor on activation
 			if (!hasSetFreezePos)
 			{
 				hasSetFreezePos = true;
 				freezePosition = Owner.position;
+				UltOrigin = Owner.MountedCenter;
+				LockedFacingDir = ResolveInitialFacingDir();
+				VisualDrawDirection = LockedFacingDir;
+				Owner.direction = LockedFacingDir;
+
+				Vector2 capturedScreenPos = Main.screenPosition;
+				Vector2 baseAnchorScreenPos = ComputeCombatAnchorScreenPos();
+				if (naughtPlayer != null)
+				{
+					if (Owner.whoAmI == Main.myPlayer && !Main.dedServ)
+					{
+						naughtPlayer.BeginUltCamera(capturedScreenPos, baseAnchorScreenPos);
+					}
+					naughtPlayer.IsUltVisualActive = true;
+				}
+				SafeFrameOrigin = Ult3DProjection.ComputeSafeFrameOrigin(UltOrigin, baseAnchorScreenPos);
 			}
 
-			// Absolutely freeze player in place throughout the entire ultimate execution
+			// Keep logical Owner.position safely anchored at ultStartPos (zero tile clipping)
 			Owner.position = freezePosition;
 			Owner.velocity = Vector2.Zero;
 			Owner.gravity = 0f;
+			Owner.gfxOffY = 0f;
 			Owner.fallStart = (int)(Owner.position.Y / 16f);
-			// Damage immunity is handled cleanly via NaughtPlayer without vanilla hurt/i-frame flickering
 			Owner.immune = false;
 			Owner.immuneTime = 0;
 			Owner.immuneAlpha = 0;
 			Owner.immuneNoBlink = true;
 			Owner.itemAnimation = 2;
 			Owner.itemTime = 2;
+			Projectile.Center = UltOrigin;
 
-			// Normal clean glow like vanilla Shine Potion (BuffID.Shine)
-			Lighting.AddLight((int)(Owner.position.X + Owner.width * 0.5f) / 16, (int)(Owner.position.Y + Owner.height * 0.5f) / 16, 0.85f, 0.95f, 1.0f);
+			if (naughtPlayer != null)
+			{
+				naughtPlayer.IsUltVisualActive = true;
+				naughtPlayer.ActiveUltProjIndex = Projectile.whoAmI;
+			}
 
-			// Physical Hitstop Micro-Pause (freezes frame on blade impact for heaviness)
+			// Keep player well-lit in dark caves and Nihility Domain dimness
+			Lighting.AddLight((int)(Owner.position.X + Owner.width * 0.5f) / 16, (int)(Owner.position.Y + Owner.height * 0.5f) / 16, 0.95f, 1.0f, 1.0f);
+
+			UpdateUltMusic();
+
+			// Physical Hitstop Micro-Pause (freezes motion & ribbon erosion on blade impact for weighty bite)
 			if (hitstopFrames > 0)
 			{
 				hitstopFrames--;
 				return;
 			}
 
+			// Advance persistent 3D visual lifetimes
+			UpdateVisualBuffers();
+
 			// Act 0: Stance Preparation (Frame 1)
 			if (Timer == 1)
 			{
-				// Absolute screen/world time stop: freezes all NPCs, liquids, and projectiles on screen!
 				WorldFreezeSystem.Activate("SlashedDreamUltimate");
 
-				// Spawn atmospheric floating petals across the screen via InnoVault PRT
 				for (int i = 0; i < 35; i++)
 				{
 					Vector2 randPos = Main.screenPosition + new Vector2(Main.rand.NextFloat(Main.screenWidth), Main.rand.NextFloat(Main.screenHeight));
-					Vector2 randVel = new Vector2(Main.rand.NextFloat(-1.8f, -0.4f), Main.rand.NextFloat(0.6f, 1.8f));
+					Vector2 randVel = new(Main.rand.NextFloat(-1.8f, -0.4f), Main.rand.NextFloat(0.6f, 1.8f));
 					PRTLoader.NewParticle<CrimsonPetalPRT>(randPos, randVel, new Color(245, 30, 55, 230), Main.rand.NextFloat(0.7f, 1.2f));
 				}
 
-				// Initial resonant chime and gong
 				SoundEngine.PlaySound(SoundID.Item29 with { Pitch = -0.3f, Volume = 0.95f }, Owner.Center);
 				SoundEngine.PlaySound(SoundID.Item4 with { Pitch = -0.2f, Volume = 0.9f }, Owner.Center);
+				if (naughtPlayer != null && Owner.whoAmI == Main.myPlayer && !Main.dedServ)
+				{
+					naughtPlayer.AddUltCameraRecoil(new Vector2(-LockedFacingDir * 7f, 0f));
+					naughtPlayer.PunchUltCameraZoom(0.10f);
+				}
 
-				// Screen punch
-				Main.instance.CameraModifiers.Add(new PunchCameraModifier(Owner.Center, Main.rand.NextVector2Unit(), 10f, 8f, 20, 1000f, "SlashedDreamAwaken"));
+				SpawnWaterRipple(new UltCoord3D(0f, WaterPlaneU, 0f), 90f, 34, 0.55f, doubleRing: true);
 			}
 
-			// Unsheath sound cue on frame 35 (thumb clicks tsuba to unlock blade)
+			// Unsheath sound cue on frame 35
 			if (Timer == 35)
 			{
+				SoundEngine.PlaySound(WeepSound.AcheronUnsheath, Owner.Center);
 				SoundEngine.PlaySound(SoundID.Item37 with { Pitch = 0.35f, Volume = 1.0f }, Owner.Center);
 			}
 
-			// Unsheath blade draw begins on frame 60 (1.0s in): blade slides out, reflection wave ripples out from player over 3.0s (180 ticks)!
+			// Unsheath blade draw begins on frame 60
 			if (Timer == 60)
 			{
 				NihilityDomainSystem.StartReflectionRipple(Owner.Bottom);
 				NihilityDomainSystem.TargetMusicSilence = 1f;
-				SoundEngine.PlaySound(SoundID.Item29 with { Pitch = -0.4f, Volume = 1.0f }, Owner.Center);
 			}
 
-			if (Timer == 130)
-			{
-				SoundEngine.PlaySound(SoundID.Item71 with { Pitch = -0.25f, Volume = 0.9f }, Owner.Center);
-			}
-
-			// At frame 240 (4.0s mark): blade fully drawn, wave completes, camera punch before slashing phase!
+			// At frame 240: blade fully drawn, enter Ready Zanshin stance
 			if (Timer == UnsheathDuration)
 			{
 				SoundEngine.PlaySound(SoundID.Item30 with { Pitch = 0.35f, Volume = 1.0f }, Owner.Center);
-				Main.instance.CameraModifiers.Add(new PunchCameraModifier(Owner.Center, new Vector2(Owner.direction, 0f), 8f, 6f, 12, 1000f, "BladeDrawn"));
+				if (naughtPlayer != null && Owner.whoAmI == Main.myPlayer && !Main.dedServ)
+				{
+					naughtPlayer.AddUltCameraRecoil(new Vector2(LockedFacingDir * 9f, 0f));
+					naughtPlayer.PunchUltCameraZoom(-0.18f);
+				}
+				SpawnWaterRipple(new UltCoord3D(0f, WaterPlaneU, 0f), 130f, 32, 0.72f, doubleRing: true);
+				StartUltMusic();
 			}
 
-			// Update 3D shader slash arcs
-			for (int i = activeArcs.Count - 1; i >= 0; i--)
+			// Process dedicated preemptive slash hit before main dash-blur strike
+			if (hasPendingPreemptiveStrike)
 			{
-				ActiveSlashArc arc = activeArcs[i];
-				arc.Timer++;
-				if (arc.Timer >= arc.MaxTime)
+				preemptiveDelayTimer--;
+				if (preemptiveDelayTimer <= 0)
 				{
-					activeArcs.RemoveAt(i);
-				}
-				else
-				{
-					activeArcs[i] = arc;
+					hasPendingPreemptiveStrike = false;
+					if (!preemptiveHitDone)
+					{
+						preemptiveHitDone = true;
+						ExecutePreemptiveRainblade(preemptiveStrikeStage, preemptiveStrikeAngle);
+					}
 				}
 			}
 
-			// Process delayed impact strike (delivers the physical hit at the apex of the swing)
+			// Process delayed impact strike at the apex of the dash-blur
 			if (hasPendingStrike)
 			{
 				impactDelayTimer--;
@@ -277,7 +327,6 @@ namespace WeepForTheDeparted.Content.Projectiles
 				}
 			}
 
-			// Update swing animation
 			if (isSwinging)
 			{
 				swingTimer++;
@@ -292,7 +341,7 @@ namespace WeepForTheDeparted.Content.Projectiles
 				slashCooldown--;
 			}
 
-			// The 9-second window ONLY starts counting down after the 1-second unsheath animation completes!
+			// 9-second slashing window begins after unsheathing finishes
 			if (Timer > UnsheathDuration)
 			{
 				if (SlashStage < 4)
@@ -311,18 +360,19 @@ namespace WeepForTheDeparted.Content.Projectiles
 						holdTimer = 0;
 					}
 
-					// Auto-advance cadence when holding down the button
-					bool autoAdvance = false;
-					if (SlashStage == 0 && holdTimer >= 22)
-						autoAdvance = true;
-					else if (SlashStage == 1 && holdTimer >= 22)
-						autoAdvance = true;
-					else if (SlashStage == 2 && holdTimer >= 24)
-						autoAdvance = true;
-					else if (SlashStage == 3 && holdTimer >= 30)
-						autoAdvance = true;
+					// BladesongRain scales Stages 0-2 by 0.65f, leaving Stage 3 unscaled
+					bool bladesongFast = naughtPlayer != null && naughtPlayer.HasBladesongRain;
+					int stage1Hold = bladesongFast ? (int)(22 * 0.65f) : 22;
+					int stage2Hold = bladesongFast ? (int)(22 * 0.65f) : 22;
+					int stage3Hold = bladesongFast ? (int)(24 * 0.65f) : 24;
+					const int resurgeHold = 30;
 
-					// Timeout safeguard: if 9 seconds have expired, auto-execute next slash so player is never trapped
+					bool autoAdvance =
+						(SlashStage == 0 && holdTimer >= stage1Hold)
+						|| (SlashStage == 1 && holdTimer >= stage2Hold)
+						|| (SlashStage == 2 && holdTimer >= stage3Hold)
+						|| (SlashStage == 3 && holdTimer >= resurgeHold);
+
 					bool timedOut = remainingSlashingTime <= 0;
 
 					if (((justPressed && slashCooldown <= 0 && !hasPendingStrike) || autoAdvance || timedOut) && !hasPendingStrike)
@@ -332,7 +382,7 @@ namespace WeepForTheDeparted.Content.Projectiles
 				}
 				else
 				{
-					// Post-Resurge: Wait for swing and impact to complete, then begin authentic reverse sheathing
+					// Post-Resurge: Wait for follow-through to settle, then begin reverse sheathing
 					if (!isSwinging && !hasPendingStrike)
 					{
 						if (!isSheathing)
@@ -341,116 +391,226 @@ namespace WeepForTheDeparted.Content.Projectiles
 							sheathTimer = 0;
 							sheathClickDone = false;
 							sheathDamageDone = false;
+							sheathStartPos3D = PlayerPos3D;
+							sheathStartLean = PlayerLeanShear;
+							SoundEngine.PlaySound(WeepSound.AcheronSheath, Owner.Center);
+							NihilityDomainSystem.StartReflectionRippleReverse(Owner.Bottom, SheathSlideDuration);
 						}
 
 						sheathTimer++;
-
-						// Keep enemies completely severed during the entire 2-second sheathing animation and 1-second post-delay
 						NihilityDismember.ReassembleFactor = 0f;
 
-						// At the end of the 2-second sheathing slide (tick SheathDuration - 16 = 104):
-						// Blade slides fully into scabbard, mouth gleam flashes, lock click sound plays!
-						if (sheathTimer >= SheathDuration - 16 && !sheathClickDone)
+						if (sheathTimer >= SheathSlideDuration && !sheathClickDone)
 						{
 							sheathClickDone = true;
 							SoundEngine.PlaySound(SoundID.Unlock with { Pitch = 0.20f, Volume = 0.85f }, Owner.Center);
 							SoundEngine.PlaySound(SoundID.Item37 with { Pitch = 0.45f, Volume = 1.0f }, Owner.Center);
+							SpawnWaterRipple(new UltCoord3D(0f, WaterPlaneU, 0f), 120f, 30, 0.70f, doubleRing: false);
 						}
 
-						// Exactly 1 second (60 ticks) after sheathing finishes (tick SheathDuration + SheathPostDelay = 180):
-						// Enemies snap back together and the massive delayed damage goes through!
-						if (sheathTimer >= SheathDuration + SheathPostDelay && !sheathDamageDone)
+						if (sheathTimer >= SheathSlideDuration + SheathPostDelay && !sheathDamageDone)
 						{
 							sheathDamageDone = true;
-
-							// 1. Put enemies back together
-							NihilityDismember.SnapBackAll();
-
-							// 2. Play delayed dimensional rupture impact sound
-							SoundEngine.PlaySound(SoundID.Item71 with { Pitch = -0.15f, Volume = 1.0f }, Owner.Center);
-							SoundEngine.PlaySound(WeepSound.KatanaHitB with { Pitch = -0.20f, Volume = 1.0f }, Owner.Center);
-
-							var np = Owner.GetModPlayer<NaughtPlayer>();
-							bool hasKarma = np != null && np.HasKarmaSever;
-							bool hasThunder = np != null && np.HasThunderCore;
-							bool hasSync = np != null && np.HasSynchronizedExecution;
-
-							NPC primaryTarget = null;
-
-							// 3. Deliver delayed Stygian Resurge damage to all targets
-							for (int i = 0; i < pendingResurgeHits.Count; i++)
-							{
-								var hit = pendingResurgeHits[i];
-								if (hit.NpcWhoAmI >= 0 && hit.NpcWhoAmI < Main.maxNPCs)
-								{
-									NPC target = Main.npc[hit.NpcWhoAmI];
-									if (target.active && !target.friendly && (!target.dontTakeDamage || target.type == NPCID.TargetDummy))
-									{
-										if (primaryTarget == null || target.boss) primaryTarget = target;
-
-										int savedDef = target.defense;
-										// Severance of Karma ignores an additional 20% defense (down to 30% defense)
-										target.defense = hasKarma ? (int)(target.defense * 0.30f) : (int)(target.defense * 0.50f);
-										target.SimpleStrikeNPC(hit.Damage, Owner.direction, true, 10f, DamageClass.Melee);
-										target.defense = savedDef;
-
-										SpawnImpactVisuals(target.Center, true);
-
-										// Severance of Karma: Non-boss execution below 6% max HP
-										if (hasKarma && !target.boss && !NPCID.Sets.ShouldBeCountedAsBoss[target.type] && target.life < target.lifeMax * 0.06f && target.type != NPCID.TargetDummy)
-										{
-											target.SimpleStrikeNPC(target.life + 1000, Owner.direction, true, 10f, DamageClass.Melee);
-										}
-									}
-								}
-							}
-							pendingResurgeHits.Clear();
-
-							// Thunder Core: Call down 9 dimensional thunderbolts dealing 30% of Stygian Resurge base damage
-							if (hasThunder)
-							{
-								int boltDamage = (int)(Projectile.damage * 4.8f * 0.30f);
-								Vector2 strikeOrigin = primaryTarget != null ? primaryTarget.Center : Owner.Center + new Vector2(Owner.direction * 200f, 0f);
-
-								for (int b = 0; b < 9; b++)
-								{
-									Vector2 strikePos = strikeOrigin + new Vector2(Main.rand.NextFloat(-180f, 180f), Main.rand.NextFloat(-40f, 40f));
-									int boltIdx = Projectile.NewProjectile(Owner.GetSource_FromThis(), strikePos, Vector2.Zero, ModContent.ProjectileType<ThunderCoreBolt>(), boltDamage, 4f, Owner.whoAmI);
-									if (boltIdx >= 0 && boltIdx < Main.maxProjectiles && Main.projectile[boltIdx].ModProjectile is ThunderCoreBolt bolt)
-									{
-										bolt.Init(strikePos);
-									}
-								}
-							}
-
-							// Synchronized Execution: Clones converge in an intersecting sheathing cross-slash across primary target
-							if (hasSync && primaryTarget != null)
-							{
-								for (int i = 0; i < Main.maxProjectiles; i++)
-								{
-									Projectile p = Main.projectile[i];
-									if (p.active && p.owner == Owner.whoAmI && p.type == ModContent.ProjectileType<NaughtClone>() && p.ModProjectile is NaughtClone clone)
-									{
-										clone.PerformSheathingCrossSlash(primaryTarget);
-									}
-								}
-							}
-
-							Main.instance.CameraModifiers.Add(new PunchCameraModifier(Owner.Center, new Vector2(Owner.direction, 0f), 20f, 9f, 18, 1400f, "SheathDamageSnap"));
-							hitstopFrames = 8;
+							ExecuteSheathingSnap(naughtPlayer);
 						}
 
-						// Conclude the ultimate 0.4s after the delayed damage goes through
-						if (sheathTimer >= SheathDuration + SheathPostDelay + SheathFinishDelay)
+						if (sheathTimer >= SheathSlideDuration + SheathPostDelay + SheathFinishDelay)
 						{
 							Projectile.Kill();
+							return;
 						}
 					}
 				}
 			}
 
-			// Adjust player composite arm
+			// Evaluate current frame's 3D choreography pose, blade transform, gleams, ripples, & afterimages
+			UpdateChoreographyAndBlade();
+			Owner.direction = VisualDrawDirection >= 0 ? 1 : -1;
+			UpdateUltCameraDirector(naughtPlayer);
 			UpdatePlayerStance();
+		}
+
+		private Vector2 ComputeCombatAnchorScreenPos()
+		{
+			Vector2 halfScreen = new(Main.screenWidth * 0.5f, Main.screenHeight * 0.5f);
+			NPC primary = FindPrimaryTarget();
+			Vector2 targetOffset = Vector2.Zero;
+			if (primary != null)
+			{
+				Vector2 toTarget = (primary.Center - UltOrigin) * 0.26f;
+				float len = toTarget.Length();
+				if (len > 135f)
+					toTarget *= 135f / len;
+				targetOffset = toTarget;
+			}
+			return NaughtPlayer.ClampScreenPosition(UltOrigin + targetOffset - halfScreen);
+		}
+
+		private void UpdateUltCameraDirector(NaughtPlayer np)
+		{
+			if (np == null || !np.UltCameraLocked || Owner.whoAmI != Main.myPlayer || Main.dedServ)
+				return;
+
+			Vector2 halfScreen = new(Main.screenWidth * 0.5f, Main.screenHeight * 0.5f);
+			Vector2 baseAnchorScreen = ComputeCombatAnchorScreenPos();
+			np.UpdateUltBaseAnchor(baseAnchorScreen);
+
+			Vector2 projectedPlayer2D = Ult3DProjection.Project(PlayerPos3D, SafeFrameOrigin, LockedFacingDir, out _);
+			Vector2 playerRel = projectedPlayer2D - SafeFrameOrigin;
+			Vector2 softFollow = playerRel * 0.36f;
+			float followLen = softFollow.Length();
+			if (followLen > 165f)
+				softFollow *= 165f / followLen;
+
+			if (Timer <= UnsheathDuration)
+			{
+				float ease = Ult3DProjection.EaseInOutQuart(MathHelper.Clamp(Timer / (float)UnsheathDuration, 0f, 1f));
+				np.SetUltCameraTarget(
+					baseAnchorScreen,
+					posStiffness: 5.5f,
+					desiredZoom: MathHelper.Lerp(1.00f, 1.06f, ease),
+					zoomStiffness: 5.0f,
+					desiredVignette: MathHelper.Lerp(0.18f, 0.36f, ease));
+				return;
+			}
+
+			if (isSheathing)
+			{
+				float returnEase = Ult3DProjection.EaseOutCubic(MathHelper.Clamp(sheathTimer / (float)(SheathSlideDuration * 0.85f), 0f, 1f));
+				Vector2 restScreen = NaughtPlayer.ClampScreenPosition(UltOrigin - halfScreen + softFollow * (1f - returnEase));
+				np.SetUltCameraTarget(
+					restScreen,
+					posStiffness: MathHelper.Lerp(5.8f, 8.2f, returnEase),
+					desiredZoom: 1.00f,
+					zoomStiffness: 6.5f,
+					desiredVignette: 0.0f);
+				return;
+			}
+
+			Vector2 lookAhead = new(LockedFacingDir * 18f, 0f);
+			float posStiffness = 8.2f;
+			float desiredZoom = 1.045f;
+			float zoomStiffness = 6.0f;
+			float desiredVignette = 0.32f;
+
+			if (isSwinging)
+			{
+				if (swingType == 0 || swingType == 1)
+				{
+					Vector2 preLook = new(LockedFacingDir * 24f, swingType == 1 ? 14f : 0f);
+					Vector2 realLook = swingType == 0 ? new Vector2(LockedFacingDir * 34f, 0f) : new Vector2(-30f, -20f);
+					if (swingTimer <= prePhaseEndTick)
+					{
+						lookAhead = preLook;
+						posStiffness = 7.2f;
+						desiredZoom = 1.045f;
+						zoomStiffness = 7.0f;
+						desiredVignette = 0.34f;
+					}
+					else if (swingTimer < coilEndTick)
+					{
+						lookAhead = realLook;
+						posStiffness = 9.5f;
+						desiredZoom = 1.06f;
+						zoomStiffness = 8.5f;
+						desiredVignette = 0.42f;
+					}
+					else if (swingTimer <= blurEndTick)
+					{
+						lookAhead = realLook * 0.65f;
+						posStiffness = 4.6f;
+						desiredZoom = 1.005f;
+						zoomStiffness = 10.5f;
+						desiredVignette = 0.56f;
+					}
+					else
+					{
+						lookAhead = realLook * 0.75f;
+						posStiffness = 8.6f;
+						desiredZoom = 1.035f;
+						zoomStiffness = 6.5f;
+						desiredVignette = 0.36f;
+					}
+				}
+				else if (swingType == 2)
+				{
+					Vector2 crashLook = new Vector2(24f, 26f);
+					if (swingTimer < coilEndTick)
+					{
+						lookAhead = crashLook;
+						posStiffness = 9.2f;
+						desiredZoom = 1.065f;
+						zoomStiffness = 8.5f;
+						desiredVignette = 0.46f;
+					}
+					else if (swingTimer <= blurEndTick)
+					{
+						lookAhead = crashLook * 0.6f;
+						posStiffness = 4.5f;
+						desiredZoom = 0.995f;
+						zoomStiffness = 11.0f;
+						desiredVignette = 0.62f;
+					}
+					else
+					{
+						lookAhead = new Vector2(18f, 10f);
+						posStiffness = 8.4f;
+						desiredZoom = 1.04f;
+						zoomStiffness = 6.5f;
+						desiredVignette = 0.38f;
+					}
+				}
+				else
+				{
+					if (swingTimer < coilEndTick)
+					{
+						lookAhead = new Vector2(-38f, 0f);
+						posStiffness = 8.0f;
+						desiredZoom = 1.085f;
+						zoomStiffness = 5.5f;
+						desiredVignette = 0.58f;
+					}
+					else if (swingTimer <= blurEndTick)
+					{
+						lookAhead = new Vector2(-24f, 0f);
+						posStiffness = 4.2f;
+						desiredZoom = 0.965f;
+						zoomStiffness = 12.5f;
+						desiredVignette = 0.68f;
+					}
+					else
+					{
+						lookAhead = new Vector2(-22f, 0f);
+						posStiffness = 7.8f;
+						desiredZoom = 1.00f;
+						zoomStiffness = 6.5f;
+						desiredVignette = 0.40f;
+					}
+				}
+			}
+
+			Vector2 desiredScreen = NaughtPlayer.ClampScreenPosition(baseAnchorScreen + softFollow + lookAhead);
+			np.SetUltCameraTarget(desiredScreen, posStiffness, desiredZoom, zoomStiffness, desiredVignette);
+		}
+
+		private int ResolveInitialFacingDir()
+		{
+			NPC primary = FindPrimaryTarget();
+			if (primary != null)
+			{
+				float dx = primary.Center.X - Owner.MountedCenter.X;
+				if (Math.Abs(dx) > 4f)
+					return dx >= 0f ? 1 : -1;
+			}
+
+			if (Owner.whoAmI == Main.myPlayer && !Main.dedServ)
+			{
+				float dx = Main.MouseWorld.X - Owner.MountedCenter.X;
+				if (Math.Abs(dx) > 4f)
+					return dx >= 0f ? 1 : -1;
+			}
+
+			return Owner.direction >= 0 ? 1 : -1;
 		}
 
 		private void AdvanceSlash()
@@ -461,81 +621,143 @@ namespace WeepForTheDeparted.Content.Projectiles
 			bool hasBladesong = np != null && np.HasBladesongRain;
 			bool hasSync = np != null && np.HasSynchronizedExecution;
 
-			// Synchronized Execution: clones awaken to mirror Rainblade strikes
+			// Synchronized Execution: clones mirror Rainblade strikes 1-3
 			if (hasSync && SlashStage < 3)
 			{
+				int cloneType = ModContent.ProjectileType<NaughtClone>();
+				var syncClones = new List<NaughtClone>();
 				for (int i = 0; i < Main.maxProjectiles; i++)
 				{
 					Projectile p = Main.projectile[i];
-					if (p.active && p.owner == Owner.whoAmI && p.type == ModContent.ProjectileType<NaughtClone>() && p.ModProjectile is NaughtClone clone)
+					if (p.active && p.owner == Owner.whoAmI && p.type == cloneType && p.ModProjectile is NaughtClone clone)
 					{
-						clone.PerformMirrorRainblade(SlashStage, new Vector2(Owner.direction, 0f));
+						syncClones.Add(clone);
 					}
+				}
+
+				float syncScale = NaughtPlayer.GetSynchronizedCloneScale(syncClones.Count);
+				Vector2 mirrorDir = new(LockedFacingDir, 0f);
+				for (int i = 0; i < syncClones.Count; i++)
+				{
+					syncClones[i].PerformMirrorRainblade(SlashStage, mirrorDir, syncScale);
 				}
 			}
 
+			stageStartPos3D = PlayerPos3D;
+			stageStartLean = PlayerLeanShear;
+			preRibbonSpawned = false;
+			windupAudioPlayed = false;
+			realRibbonSpawned = false;
+			resurgeWindupFlashSpawned = false;
+			hasPendingPreemptiveStrike = false;
+			preemptiveHitDone = false;
+
 			if (SlashStage == 0)
 			{
-				// Rainblade Strike 1: Overhead descending cleave with forward 3D depth tilt!
-				float angle = GenerateNextSlashAngle();
-				float tilt = MathHelper.ToRadians(38f);
+				// Rainblade 1: Committed Forward-into-Background (+F, -Z) preemptive cut -> Explosive Forward-to-Screen (+F, +Z) cleave
 				int duration = isHolding ? 22 : 34;
-				int delay = isHolding ? 7 : 11;
-				if (hasBladesong) { duration = (int)(duration * 0.65f); delay = (int)(delay * 0.65f); }
+				if (hasBladesong)
+					duration = Math.Max(12, (int)(duration * 0.65f));
 
-				StartSwingAnimation(angle, 0, tilt, duration, delay);
-				ScheduleImpact(1, angle, tilt, delay);
+				PartitionPreemptiveStageTiming(duration, out prePhaseEndTick, out coilEndTick, out blurEndTick);
+				int preDelay = ComputePreemptiveImpactDelay(prePhaseEndTick);
+				int impactDelay = blurEndTick - 1;
+				float preAngle = LockedFacingDir > 0 ? MathHelper.ToRadians(8f) : MathHelper.ToRadians(172f);
+				float angle = LockedFacingDir > 0 ? 0.04f : MathHelper.Pi - 0.04f;
+				float tilt = MathHelper.ToRadians(58f);
+
+				StartSwingState(0, duration);
+				SchedulePreemptiveImpact(1, preAngle, preDelay);
+				ScheduleImpact(1, angle, tilt, impactDelay, playWindupImmediately: false);
 				SlashStage = 1;
-				slashCooldown = duration - 4;
+				slashCooldown = Math.Max(impactDelay + 2, duration - 4);
 			}
 			else if (SlashStage == 1)
 			{
-				// Rainblade Strike 2: Rising diagonal reverse cleave with upward-receding 3D depth tilt!
-				float angle = GenerateNextSlashAngle();
-				float tilt = MathHelper.ToRadians(-42f);
+				// Rainblade 2: Forward-Low-to-Screen (+F, -U, +Z) preemptive draw-slash -> Rising Diagonal Bottom-Right (-U, +Z) to Upper-Left (+U, -Z)
 				int duration = isHolding ? 22 : 34;
-				int delay = isHolding ? 7 : 11;
-				if (hasBladesong) { duration = (int)(duration * 0.65f); delay = (int)(delay * 0.65f); }
+				if (hasBladesong)
+					duration = Math.Max(12, (int)(duration * 0.65f));
 
-				StartSwingAnimation(angle, 1, tilt, duration, delay);
-				ScheduleImpact(2, angle, tilt, delay);
+				PartitionPreemptiveStageTiming(duration, out prePhaseEndTick, out coilEndTick, out blurEndTick);
+				int preDelay = ComputePreemptiveImpactDelay(prePhaseEndTick);
+				int impactDelay = blurEndTick - 1;
+				float preAngle = LockedFacingDir > 0 ? MathHelper.ToRadians(26f) : MathHelper.ToRadians(154f);
+				float angle = MathHelper.ToRadians(-146f);
+				float tilt = MathHelper.ToRadians(-46f);
+
+				StartSwingState(1, duration);
+				SchedulePreemptiveImpact(2, preAngle, preDelay);
+				ScheduleImpact(2, angle, tilt, impactDelay, playWindupImmediately: false);
 				SlashStage = 2;
-				slashCooldown = duration - 4;
+				slashCooldown = Math.Max(impactDelay + 2, duration - 4);
 			}
 			else if (SlashStage == 2)
 			{
-				// Rainblade Strike 3: Horizontal sideways cleave with extreme 3D perspective foreshortening!
-				float baseAngle = Owner.direction > 0 ? 0.05f : (float)Math.PI - 0.05f;
-				float angle = baseAngle + Main.rand.NextFloat(-0.10f, 0.10f);
-				float tilt = MathHelper.ToRadians(62f);
+				// Rainblade 3: Direct continuation from Upper-Left (+U, -Z) -> Big Descending Diagonal to Bottom-Right (-U, +Z)
 				int duration = isHolding ? 24 : 38;
-				int delay = isHolding ? 8 : 13;
-				if (hasBladesong) { duration = (int)(duration * 0.65f); delay = (int)(delay * 0.65f); }
+				if (hasBladesong)
+					duration = Math.Max(13, (int)(duration * 0.65f));
 
-				StartSwingAnimation(angle, 2, tilt, duration, delay);
-				ScheduleImpact(3, angle, tilt, delay);
+				prePhaseEndTick = 0;
+				coilEndTick = Math.Max(3, (int)MathF.Round(duration * 0.24f));
+				blurEndTick = Math.Max(coilEndTick + 2, Math.Min(duration - 5, (int)MathF.Round(duration * 0.34f)));
+				int impactDelay = blurEndTick - 1;
+				float angle = MathHelper.ToRadians(34f);
+				float tilt = MathHelper.ToRadians(46f);
+
+				StartSwingState(2, duration);
+				ScheduleImpact(3, angle, tilt, impactDelay, playWindupImmediately: true);
 				SlashStage = 3;
-				slashCooldown = duration - 4;
+				slashCooldown = Math.Max(impactDelay + 2, duration - 4);
 
-				// Silence / zanshin chime before grand rupture
 				SoundEngine.PlaySound(SoundID.Item30 with { Pitch = 0.45f, Volume = 0.75f }, Owner.Center);
 			}
 			else if (SlashStage == 3)
 			{
-				// Stygian Resurge (Screen cleave finale with spatial depth tilt)
-				float angle = GenerateResurgeAngle();
-				float tilt = MathHelper.ToRadians(30f);
+				// Stygian Resurge (Unscaled): Calm Lethal Windup in Foreground Right (+Z) -> Instant Flash-Step Cleave Right (+Z) to Left (-Z)
 				int duration = isHolding ? 28 : 46;
-				int delay = isHolding ? 9 : 15;
+				prePhaseEndTick = 0;
+				coilEndTick = isHolding ? 11 : 19;
+				blurEndTick = coilEndTick + 2;
+				int impactDelay = blurEndTick - 1;
+				float angle = MathHelper.Pi;
+				float tilt = MathHelper.ToRadians(24f);
 
-				StartSwingAnimation(angle, 3, tilt, duration, delay);
-				ScheduleImpact(4, angle, tilt, delay);
+				StartSwingState(3, duration);
+				ScheduleImpact(4, angle, tilt, impactDelay, playWindupImmediately: true);
 				SlashStage = 4;
-				postResurgeTimer = 0;
 			}
 		}
 
-		private void ScheduleImpact(int index, float angle, float tilt, int delay)
+		private static void PartitionPreemptiveStageTiming(int duration, out int preEnd, out int coilEnd, out int blurEnd)
+		{
+			preEnd = Math.Max(4, (int)MathF.Round(duration * 0.36f));
+			coilEnd = Math.Max(preEnd + 2, (int)MathF.Round(duration * 0.50f));
+			blurEnd = Math.Max(coilEnd + 2, Math.Min(duration - 4, (int)MathF.Round(duration * 0.59f)));
+		}
+
+		private static int ComputePreemptiveImpactDelay(int preEnd)
+			=> Math.Max(2, Math.Min(preEnd - 1, (int)MathF.Round(preEnd * 0.60f)));
+
+		private void SchedulePreemptiveImpact(int stageIndex, float angle, int delay)
+		{
+			hasPendingPreemptiveStrike = true;
+			preemptiveStrikeStage = stageIndex;
+			preemptiveStrikeAngle = angle;
+			preemptiveDelayTimer = Math.Max(1, delay);
+			preemptiveHitDone = false;
+		}
+
+		private void StartSwingState(int type, int duration)
+		{
+			isSwinging = true;
+			swingTimer = 0;
+			swingDuration = duration;
+			swingType = type;
+		}
+
+		private void ScheduleImpact(int index, float angle, float tilt, int delay, bool playWindupImmediately)
 		{
 			hasPendingStrike = true;
 			pendingStrikeIndex = index;
@@ -543,81 +765,1101 @@ namespace WeepForTheDeparted.Content.Projectiles
 			pendingStrikeTilt = tilt;
 			impactDelayTimer = delay;
 
-			// Play Acheron sub-bass windup / vacuum draw sound as the blade begins its swing
+			if (playWindupImmediately)
+			{
+				windupAudioPlayed = true;
+				PlayWindupSounds();
+			}
+		}
+
+		private void PlayWindupSounds()
+		{
 			SoundEngine.PlaySound(WeepSound.AcheronWindup, Owner.Center);
 			SoundEngine.PlaySound(SoundID.Item71 with { Pitch = -0.25f, Volume = 0.65f }, Owner.Center);
 		}
 
-		private void StartSwingAnimation(float angle, int type, float tiltX, int duration, int impactDelay)
+		private void ExecuteSheathingSnap(NaughtPlayer np)
 		{
-			isSwinging = true;
-			swingTimer = 0;
-			swingDuration = duration;
-			swingType = type;
-			swingImpactProgress = MathHelper.Clamp(impactDelay / (float)duration, 0.25f, 0.45f);
+			NihilityDismember.SnapBackAll();
 
-			float dir = Owner.direction;
-			if (type == 0)
+			// Shatter persistent dimensional cleave seams upon sheathing snap
+			for (int i = ActiveSeams.Count - 1; i >= 0; i--)
 			{
-				// Overhead descending cut: sweeps from high-back to low-front
-				swingStartAngle = angle - dir * MathHelper.ToRadians(105f);
-				swingEndAngle = angle + dir * MathHelper.ToRadians(80f);
+				UltCleaveSeam3D seam = ActiveSeams[i];
+				if (seam.PersistUntilSnap)
+				{
+					seam.PersistUntilSnap = false;
+					seam.Age = 0;
+					seam.MaxAge = 18;
+					ActiveSeams[i] = seam;
+				}
 			}
-			else if (type == 1)
+
+			SoundEngine.PlaySound(SoundID.Item71 with { Pitch = -0.15f, Volume = 1.0f }, Owner.Center);
+			SoundEngine.PlaySound(WeepSound.KatanaHitB with { Pitch = -0.20f, Volume = 1.0f }, Owner.Center);
+
+			bool hasKarma = np != null && np.HasKarmaSever;
+			bool hasThunder = np != null && np.HasThunderCore;
+			bool hasSync = np != null && np.HasSynchronizedExecution;
+			if (np != null)
 			{
-				// Rising reverse cut: sweeps from low-back to high-front
-				swingStartAngle = angle + dir * MathHelper.ToRadians(85f);
-				swingEndAngle = angle - dir * MathHelper.ToRadians(95f);
+				Projectile.CritChance = np.GetNaughtCritChance();
 			}
-			else if (type == 2)
+
+			NPC primaryTarget = null;
+
+			for (int i = 0; i < pendingResurgeHits.Count; i++)
 			{
-				// Sideways horizontal cleave: cuts flat across camera plane
-				swingStartAngle = angle - dir * MathHelper.ToRadians(68f);
-				swingEndAngle = angle + dir * MathHelper.ToRadians(68f);
+				var hit = pendingResurgeHits[i];
+				if (hit.NpcWhoAmI >= 0 && hit.NpcWhoAmI < Main.maxNPCs)
+				{
+					NPC target = Main.npc[hit.NpcWhoAmI];
+					if (target.active && !target.friendly && (!target.dontTakeDamage || target.type == NPCID.TargetDummy))
+					{
+						if (primaryTarget == null || target.boss)
+							primaryTarget = target;
+
+						if (np != null)
+						{
+							np.StrikeNPC(
+								target,
+								hit.Damage,
+								LockedFacingDir,
+								crit: true,
+								knockBack: 10f,
+								sourceProj: Projectile,
+								modifyHit: hasKarma
+									? (ref NPC.HitModifiers mods) =>
+									{
+										mods.ScalingArmorPenetration += 0.20f;
+									}
+									: null,
+								isUltimate: true);
+						}
+						else
+						{
+							int savedDef = target.defense;
+							try
+							{
+								if (hasKarma)
+								{
+									target.defense = (int)(target.defense * 0.80f);
+								}
+								target.SimpleStrikeNPC(hit.Damage, LockedFacingDir, true, 10f, WeepCompatibility.TrueMelee);
+							}
+							finally
+							{
+								target.defense = savedDef;
+							}
+						}
+
+						SpawnImpactVisuals(target.Center, true);
+					}
+				}
 			}
-			else
+			pendingResurgeHits.Clear();
+
+			if (hasThunder)
 			{
-				// Stygian Resurge: massive full-circle battou sweep
-				swingStartAngle = angle - dir * MathHelper.ToRadians(120f);
-				swingEndAngle = angle + dir * MathHelper.ToRadians(120f);
+				Vector2 strikeOrigin = primaryTarget != null ? primaryTarget.Center : Owner.Center + new Vector2(LockedFacingDir * 200f, 0f);
+				np.QueueThunderCoreBarrage(primaryTarget?.whoAmI ?? -1, strikeOrigin);
 			}
+
+			if (np != null && np.HasVoidHorizon)
+			{
+				int fissureDmg = np.GetNaughtDamage(VoidFissure.DamageMultiplier);
+				int portalCount = 0;
+				int cloneType = ModContent.ProjectileType<NaughtClone>();
+				for (int i = 0; i < Main.maxProjectiles; i++)
+				{
+					Projectile p = Main.projectile[i];
+					if (p.active && p.owner == Owner.whoAmI && p.type == cloneType)
+					{
+						int fIdx = Projectile.NewProjectile(Owner.GetSource_FromThis(), p.Center, Vector2.Zero, ModContent.ProjectileType<VoidFissure>(), fissureDmg, 0f, Owner.whoAmI);
+						if (fIdx >= 0 && fIdx < Main.maxProjectiles && Main.projectile[fIdx].ModProjectile is VoidFissure vf)
+						{
+							vf.Init(p.Center, seed: 0.37f * (portalCount + 1), rotation: Main.rand.NextFloat(-0.35f, 0.35f));
+						}
+						portalCount++;
+					}
+				}
+
+				if (portalCount == 0)
+				{
+					Vector2 fallbackPos = primaryTarget != null
+						? primaryTarget.Center
+						: Owner.MountedCenter + new Vector2(LockedFacingDir * 160f, 0f);
+					int fIdx = Projectile.NewProjectile(Owner.GetSource_FromThis(), fallbackPos, Vector2.Zero, ModContent.ProjectileType<VoidFissure>(), fissureDmg, 0f, Owner.whoAmI);
+					if (fIdx >= 0 && fIdx < Main.maxProjectiles && Main.projectile[fIdx].ModProjectile is VoidFissure vf)
+					{
+						vf.Init(fallbackPos, seed: 1.15f, rotation: Main.rand.NextFloat(-0.25f, 0.25f));
+					}
+				}
+			}
+
+			if (hasSync)
+			{
+				if (primaryTarget == null || !primaryTarget.active)
+					primaryTarget = FindPrimaryTarget();
+
+				Vector2 fallbackCrossCenter = primaryTarget != null && primaryTarget.active
+					? primaryTarget.Center
+					: Owner.Center + new Vector2(LockedFacingDir * 200f, 0f);
+
+				int cloneType = ModContent.ProjectileType<NaughtClone>();
+				var syncClones = new List<NaughtClone>();
+				for (int i = 0; i < Main.maxProjectiles; i++)
+				{
+					Projectile p = Main.projectile[i];
+					if (p.active && p.owner == Owner.whoAmI && p.type == cloneType && p.ModProjectile is NaughtClone clone)
+					{
+						syncClones.Add(clone);
+					}
+				}
+
+				float syncScale = NaughtPlayer.GetSynchronizedCloneScale(syncClones.Count);
+				for (int i = 0; i < syncClones.Count; i++)
+				{
+					syncClones[i].PerformSheathingCrossSlash(primaryTarget, fallbackCrossCenter, syncScale, emitRuptureFlash: i == 0);
+				}
+			}
+
+			if (np != null && np.HasEmancipatorWill)
+			{
+				np.EmancipatorCritBuffTimer = 600;
+			}
+
+			if (np != null && Owner.whoAmI == Main.myPlayer && !Main.dedServ)
+			{
+				np.AddUltCameraRecoil(new Vector2(LockedFacingDir * 14f, 2f));
+				np.PunchUltCameraZoom(-0.24f);
+			}
+			NihilityDomainSystem.AnomalyPulse = 0.85f;
+			SpawnWaterRipple(new UltCoord3D(0f, WaterPlaneU, 0f), 220f, 26, 0.85f, doubleRing: true);
+			hitstopFrames = 8;
 		}
 
-		private float GenerateNextSlashAngle()
+		private void UpdateVisualBuffers()
 		{
-			float angle;
-			float forwardAngle = Owner.direction > 0 ? 0f : (float)Math.PI;
-
-			if (lastSlashAngle < -900f)
+			for (int i = Afterimages.Count - 1; i >= 0; i--)
 			{
-				// First slash: random diagonal in front of the player (-45 to +45 deg relative to forward)
-				angle = forwardAngle + Main.rand.NextFloat(-0.75f, 0.75f);
-			}
-			else
-			{
-				// Subsequent slashes: alternate or separate by 42 to 75 degrees in front of player
-				float delta = Main.rand.NextFloat(0.72f, 1.25f);
-				float rel = MathHelper.WrapAngle(lastSlashAngle - forwardAngle);
-				if (rel > 0.15f)
-					angle = forwardAngle - delta * 0.75f;
-				else if (rel < -0.15f)
-					angle = forwardAngle + delta * 0.75f;
+				var g = Afterimages[i];
+				g.Age++;
+				if (g.Age >= g.MaxAge)
+					Afterimages.RemoveAt(i);
 				else
-					angle = forwardAngle + (Main.rand.NextBool() ? delta : -delta);
+					Afterimages[i] = g;
 			}
 
-			lastSlashAngle = angle;
-			return angle;
+			for (int i = BladeGhosts.Count - 1; i >= 0; i--)
+			{
+				var bg = BladeGhosts[i];
+				bg.Age++;
+				if (bg.Age >= bg.MaxAge)
+					BladeGhosts.RemoveAt(i);
+				else
+					BladeGhosts[i] = bg;
+			}
+
+			for (int i = WaterRipples.Count - 1; i >= 0; i--)
+			{
+				var wr = WaterRipples[i];
+				wr.Age++;
+				if (wr.Age >= wr.MaxAge)
+					WaterRipples.RemoveAt(i);
+				else
+					WaterRipples[i] = wr;
+			}
+
+			for (int i = ActiveRibbons.Count - 1; i >= 0; i--)
+			{
+				var rib = ActiveRibbons[i];
+				rib.Age++;
+				if (rib.Age >= rib.MaxAge)
+					ActiveRibbons.RemoveAt(i);
+				else
+					ActiveRibbons[i] = rib;
+			}
+
+			for (int i = ActiveSeams.Count - 1; i >= 0; i--)
+			{
+				var seam = ActiveSeams[i];
+				seam.Age++;
+				if (!seam.PersistUntilSnap && seam.Age >= seam.MaxAge)
+					ActiveSeams.RemoveAt(i);
+				else
+					ActiveSeams[i] = seam;
+			}
+
+			ActiveGleams.Clear();
 		}
 
-		private float GenerateResurgeAngle()
+		private void UpdateChoreographyAndBlade()
 		{
-			float baseAngle = Main.rand.NextBool() ? MathHelper.ToRadians(28f) : MathHelper.ToRadians(-28f);
-			if (Owner.direction < 0)
+			UltCoord3D prevPos = PlayerPos3D;
+
+			// =========================================================================
+			// PHASE 0: UNSHEATHING (4.0s at (0, 0, 0) with Iaido stance & mouth gleam)
+			// =========================================================================
+			if (Timer <= UnsheathDuration)
 			{
-				baseAngle = (float)Math.PI - baseAngle;
+				float progress = MathHelper.Clamp((Timer - 60f) / 180f, 0f, 1f);
+				float slideProgress = VaultUtils.EaseQuadOut(progress);
+				CurrentSheathSlideDist = MathHelper.Lerp(0f, 22f, slideProgress);
+
+				PlayerPos3D = new UltCoord3D(0f, -3f * slideProgress, 0f);
+				PlayerVel3D = PlayerPos3D - prevPos;
+				VisualDrawDirection = LockedFacingDir;
+				PlayerLeanShear = MathHelper.Lerp(0.10f, 0.22f, slideProgress) * LockedFacingDir;
+				PlayerBodyTilt = 0f;
+				PlayerWidthScale = 1f;
+				PlayerSquashY = MathHelper.Lerp(0.98f, 0.93f, slideProgress);
+				PlayerStretchAmount = 0f;
+				BladeGlowIntensity = 0.25f;
+
+				if (Timer >= 35 && Timer <= 85)
+				{
+					float t = (Timer - 35f) / 50f;
+					float flashAlpha = t < 0.45f ? (t / 0.45f) : (1f - (t - 0.45f) / 0.55f);
+					EmitSheathMouthGleam(slideAdvance: 0f, flashAlpha);
+				}
+
+				if (Timer >= 220 && Timer <= 240)
+				{
+					float t = (Timer - 220f) / 20f;
+					float flashAlpha = 1f - t;
+					EmitSheathMouthGleam(slideAdvance: CurrentSheathSlideDist * 0.4f, flashAlpha * 0.85f);
+				}
+
+				hasPrevBladePose = false;
+				return;
 			}
-			return baseAngle + Main.rand.NextFloat(-0.08f, 0.08f);
+
+			// =========================================================================
+			// PHASE 2: REVERSE SHEATHING (smoothly returns from -Z back to (0, 0, 0))
+			// =========================================================================
+			if (isSheathing)
+			{
+				float settleT = Ult3DProjection.EaseOutCubic(MathHelper.Clamp(sheathTimer / 42f, 0f, 1f));
+				PlayerPos3D = UltCoord3D.Lerp(sheathStartPos3D, UltCoord3D.Zero, settleT);
+				PlayerVel3D = PlayerPos3D - prevPos;
+				VisualDrawDirection = LockedFacingDir;
+				PlayerLeanShear = MathHelper.Lerp(sheathStartLean, 0.14f * LockedFacingDir, settleT);
+				PlayerBodyTilt = 0f;
+				PlayerWidthScale = 1f;
+				PlayerSquashY = MathHelper.Lerp(0.94f, 0.98f, settleT);
+				PlayerStretchAmount = 0f;
+
+				float p = MathHelper.Clamp(sheathTimer / (float)SheathSlideDuration, 0f, 1f);
+				float reverseProgress = 1f - VaultUtils.EaseQuadOut(p);
+				CurrentSheathSlideDist = MathHelper.Lerp(0f, 22f, reverseProgress);
+
+				if (sheathTimer >= SheathSlideDuration && sheathTimer <= SheathSlideDuration + SheathGleamDuration)
+				{
+					float flashAlpha = 1f - MathHelper.Clamp((sheathTimer - SheathSlideDuration) / (float)SheathGleamDuration, 0f, 1f);
+					EmitSheathMouthGleam(slideAdvance: 0f, flashAlpha);
+				}
+
+				hasPrevBladePose = false;
+				return;
+			}
+
+			// =========================================================================
+			// PHASE 1: ACTIVE 3D SLASH CHOREOGRAPHY vs READY ZANSHIN STANCE
+			// =========================================================================
+			if (isSwinging)
+			{
+				UpdateActiveSlash3D(prevPos);
+			}
+			else
+			{
+				UpdateIdleZanshinStance(prevPos);
+			}
+
+			// Emit subtle blade ghost trail whenever blade swings rapidly through 3D space
+			if (hasPrevBladePose)
+			{
+				float tipSpeed = (Tip3D - prevTip3D).Length();
+				if (tipSpeed > 34f && (isSwinging || BladeGhosts.Count < 4))
+				{
+					BladeGhosts.Add(new UltBladeGhost3D
+					{
+						Hilt3D = prevHilt3D,
+						Tip3D = prevTip3D,
+						BroadsideNormal3D = BladeBroadsideNormal3D,
+						DrawDirection = VisualDrawDirection,
+						Age = 0,
+						MaxAge = 7,
+						Opacity = 0.55f
+					});
+				}
+			}
+
+			prevHilt3D = Hilt3D;
+			prevTip3D = Tip3D;
+			hasPrevBladePose = true;
+		}
+
+		private void EmitSheathMouthGleam(float slideAdvance, float flashAlpha)
+		{
+			if (flashAlpha <= 0.002f)
+				return;
+
+			Vector2 playerWorld = Ult3DProjection.Project(PlayerPos3D, SafeFrameOrigin, LockedFacingDir, out float persp);
+			Vector2 slideDir = new(LockedFacingDir * 0.94f, -0.34f * Owner.gravDir);
+			Vector2 hipOffset = new Vector2(LockedFacingDir * -6f, 2f * Owner.gravDir) * persp;
+			Vector2 sheathPos = playerWorld + hipOffset;
+			float baseAngle = MathHelper.ToRadians(205f);
+			float sheathRot = LockedFacingDir > 0 ? baseAngle : -baseAngle;
+			Vector2 mouthOffset = new Vector2(LockedFacingDir > 0 ? -16f : 16f, 32f) * 0.95f * persp;
+			Vector2 gleamPos = sheathPos + mouthOffset.RotatedBy(sheathRot) + slideDir * slideAdvance;
+
+			ActiveGleams.Add(new UltGleamFlash3D
+			{
+				WorldPos = gleamPos,
+				AxisAngle = slideDir.ToRotation(),
+				Alpha = flashAlpha,
+				Scale = persp
+			});
+		}
+
+		private UltCoord3D Screen3D(float right, float up, float z) => new(right * LockedFacingDir, up, z);
+
+		private void UpdateIdleZanshinStance(UltCoord3D prevPos)
+		{
+			readyStanceTicks++;
+			float breathe = MathF.Sin(readyStanceTicks * 0.08f);
+
+			if (SlashStage == 0)
+			{
+				// Low, poised Zanshin ready stance right after unsheathing
+				float settle = Ult3DProjection.EaseOutCubic(MathHelper.Clamp(readyStanceTicks / 12f, 0f, 1f));
+				PlayerPos3D = new UltCoord3D(4f * settle, -5f * settle + breathe * 1.1f, 0f);
+				VisualDrawDirection = LockedFacingDir;
+				PlayerLeanShear = 0.24f * settle * LockedFacingDir;
+				PlayerBodyTilt = 0f;
+				PlayerWidthScale = 1f;
+				PlayerSquashY = MathHelper.Lerp(0.97f, 0.90f, settle);
+				PlayerStretchAmount = 0f;
+				BladeGlowIntensity = 0.32f + 0.10f * breathe;
+
+				// Blade trailed low and back into -Z behind wielder
+				UltCoord3D handOffset = Screen3D(-4f * VisualDrawDirection, -4f, -4f);
+				UltCoord3D bladeDir = Screen3D(-0.82f * VisualDrawDirection, -0.44f, -0.36f).SafeNormalize(Screen3D(-1f, -0.4f, -0.3f));
+				SetBladeFromDirection(PlayerPos3D + handOffset, bladeDir, BaseBladeLength3D, Screen3D(0f, 1f, 0.25f));
+
+				if (readyStanceTicks % 24 == 10)
+				{
+					SpawnWaterRipple(new UltCoord3D(PlayerPos3D.F, WaterPlaneU, PlayerPos3D.Z), 88f, 34, 0.45f, doubleRing: false);
+				}
+
+				if (!Main.dedServ && readyStanceTicks % 5 == 0)
+				{
+					Vector2 tipWorld = Ult3DProjection.Project(Tip3D, SafeFrameOrigin, LockedFacingDir, out _);
+					PRTLoader.NewParticle<VoidSparkPRT>(tipWorld, new Vector2(-VisualDrawDirection * 0.8f, -0.6f), new Color(245, 35, 70), 0.55f);
+				}
+			}
+			else
+			{
+				// Hold settled Zanshin posture from whichever slash just ended
+				PlayerVel3D = PlayerPos3D - prevPos;
+				PlayerStretchAmount = 0f;
+				BladeGlowIntensity = 0.36f + 0.08f * breathe;
+
+				if (!Main.dedServ && readyStanceTicks % 7 == 0)
+				{
+					Vector2 tipWorld = Ult3DProjection.Project(Tip3D, SafeFrameOrigin, LockedFacingDir, out _);
+					PRTLoader.NewParticle<VoidSparkPRT>(tipWorld, new Vector2(0f, -0.7f), new Color(255, 50, 85), 0.50f);
+				}
+			}
+		}
+
+		private void UpdateActiveSlash3D(UltCoord3D prevPos)
+		{
+			if (swingType == 0)
+			{
+				EvaluateRainblade1(prevPos);
+			}
+			else if (swingType == 1)
+			{
+				EvaluateRainblade2(prevPos);
+			}
+			else if (swingType == 2)
+			{
+				EvaluateRainblade3(prevPos);
+			}
+			else
+			{
+				EvaluateStygianResurge(prevPos);
+			}
+		}
+
+		private float ResolvePreemptiveForwardOffset(float fallbackF = 58f)
+		{
+			NPC primary = FindPrimaryTarget();
+			if (primary != null)
+			{
+				float forwardProj = (primary.Center.X - UltOrigin.X) * LockedFacingDir;
+				if (forwardProj > 12f)
+					return MathHelper.Clamp(forwardProj * 0.55f, 44f, 96f);
+			}
+			return fallbackF;
+		}
+
+		private void EvaluateRainblade1(UltCoord3D prevPos)
+		{
+			float preFwd = ResolvePreemptiveForwardOffset(58f);
+			UltCoord3D preEndPos = new(preFwd, -6f, -215f);
+			UltCoord3D coilPos = new(preFwd * 0.72f, -12f, -230f);
+			UltCoord3D realApexPos = Screen3D(40f, 2f, 166f);
+			UltCoord3D zanshinEndPos = Screen3D(44f, -6f, 160f);
+
+			if (swingTimer <= prePhaseEndTick)
+			{
+				// Sub-phase 1: Committed Forward-into-Background (+F, -Z) preemptive lunge across the enemy plane
+				float p = swingTimer / (float)Math.Max(1, prePhaseEndTick);
+				int preDashStart = Math.Max(1, prePhaseEndTick / 4);
+				int preDashEnd = Math.Max(preDashStart + 1, (int)MathF.Round(prePhaseEndTick * 0.62f));
+
+				if (swingTimer == 1)
+				{
+					SoundEngine.PlaySound(WeepSound.KatanaA with { Volume = 0.62f, Pitch = 0.25f }, Owner.Center);
+					SpawnWaterRipple(new UltCoord3D(stageStartPos3D.F, WaterPlaneU, stageStartPos3D.Z), 95f, 24, 0.55f, doubleRing: false);
+				}
+
+				if (swingTimer < preDashStart)
+				{
+					PlayerPos3D = UltCoord3D.Lerp(stageStartPos3D, stageStartPos3D + new UltCoord3D(-8f, -5f, 18f), swingTimer / (float)preDashStart);
+					VisualDrawDirection = LockedFacingDir;
+					PlayerLeanShear = -0.14f * LockedFacingDir;
+					PlayerSquashY = 0.88f;
+					PlayerStretchAmount = 0f;
+					SetBladeFromDirection(PlayerPos3D + new UltCoord3D(6f, -2f, 8f), new UltCoord3D(0.55f, 0.22f, 0.80f), BaseBladeLength3D, new UltCoord3D(0f, 1f, 0f));
+				}
+				else if (swingTimer <= preDashEnd)
+				{
+					float u = (swingTimer - preDashStart) / (float)Math.Max(1, preDashEnd - preDashStart);
+					float dashEase = Ult3DProjection.EaseOutCubic(u);
+					PlayerPos3D = UltCoord3D.Lerp(stageStartPos3D, preEndPos, dashEase);
+					VisualDrawDirection = LockedFacingDir;
+					PlayerLeanShear = 0.36f * LockedFacingDir;
+					PlayerSquashY = 0.90f;
+					ApplyDashStretch(prevPos, PlayerPos3D, 1.12f * MathF.Sin(u * MathHelper.Pi));
+					EmitDashEchoes(prevPos, PlayerPos3D, count: 2, starkLead: false, initialAlpha: 0.44f);
+					EmitWaterSprayAlongPath(prevPos, PlayerPos3D, 2);
+
+					if (!preRibbonSpawned)
+					{
+						preRibbonSpawned = true;
+						ActiveRibbons.Add(new UltSlashRibbon3D
+						{
+							Center3D = new UltCoord3D(preFwd * 0.78f, -3f, -85f),
+							AxisU3D = new UltCoord3D(0.86f, -0.05f, 0.50f),
+							AxisV3D = new UltCoord3D(-0.48f, 0.08f, 0.87f),
+							StartAngle = MathHelper.ToRadians(30f),
+							EndAngle = MathHelper.ToRadians(-140f),
+							RadiusStart = 140f,
+							RadiusEnd = 180f,
+							WidthStart = 46f,
+							WidthEnd = 62f,
+							ZBiasEnd = -95f,
+							Thick = 0.48f,
+							Seed = 0.17f,
+							Age = 0,
+							MaxAge = Math.Max(10, prePhaseEndTick + 4),
+							SweepFrames = Math.Max(2, preDashEnd - preDashStart + 1),
+							Opacity = 0.82f,
+							RazorWiden = 0.24f,
+							IsPreemptive = true,
+							IsResurge = false,
+							DepthDimBias = 0.14f
+						});
+					}
+
+					// Torso-first whip slicing across +F from foreground/neutral into -Z background
+					float whipT = MathHelper.Clamp(u * 1.15f - 0.10f, 0f, 1f);
+					UltCoord3D sweepDir = UltCoord3D.Lerp(new UltCoord3D(0.50f, 0.14f, 0.85f), new UltCoord3D(-0.35f, -0.10f, -0.93f), Ult3DProjection.EaseOutCubic(whipT))
+						.SafeNormalize(new UltCoord3D(0.75f, 0f, -0.65f));
+					SetBladeFromDirection(PlayerPos3D + new UltCoord3D(8f, -2f, -4f), sweepDir, BaseBladeLength3D * 1.02f, new UltCoord3D(0f, 1f, 0f));
+				}
+				else
+				{
+					PlayerPos3D = preEndPos;
+					VisualDrawDirection = LockedFacingDir;
+					PlayerLeanShear = 0.26f * LockedFacingDir;
+					PlayerSquashY = 0.88f;
+					PlayerStretchAmount = 0f;
+					SetBladeFromDirection(PlayerPos3D + new UltCoord3D(6f, -4f, -6f), new UltCoord3D(-0.35f, -0.12f, -0.92f), BaseBladeLength3D, new UltCoord3D(0f, 1f, 0f));
+				}
+
+				BladeGlowIntensity = 0.42f;
+				PlayerWidthScale = 1f;
+				PlayerBodyTilt = 0.06f * LockedFacingDir * p;
+			}
+			else if (swingTimer < coilEndTick)
+			{
+				// Sub-phase 2: Grounded coiled stillness in -Z, telegraphing explosive reversal to +Z
+				if (!windupAudioPlayed)
+				{
+					windupAudioPlayed = true;
+					PlayWindupSounds();
+					SpawnWaterRipple(new UltCoord3D(coilPos.F, WaterPlaneU, coilPos.Z), 110f, 26, 0.60f, doubleRing: true);
+				}
+
+				float c = (swingTimer - prePhaseEndTick) / (float)Math.Max(1, coilEndTick - prePhaseEndTick);
+				PlayerPos3D = UltCoord3D.Lerp(preEndPos, coilPos, c);
+				VisualDrawDirection = -LockedFacingDir;
+				PlayerLeanShear = MathHelper.Lerp(0.18f * LockedFacingDir, -0.34f * LockedFacingDir, c);
+				PlayerBodyTilt = -0.06f * LockedFacingDir;
+				PlayerWidthScale = 1f;
+				PlayerSquashY = MathHelper.Lerp(0.88f, 0.82f, c);
+				PlayerStretchAmount = 0f;
+				BladeGlowIntensity = 0.55f + 0.25f * c;
+
+				SetBladeFromDirection(PlayerPos3D + new UltCoord3D(-4f, -6f, -6f), new UltCoord3D(-0.88f, -0.18f, -0.44f), BaseBladeLength3D, new UltCoord3D(0f, 0.9f, 0.35f));
+			}
+			else if (swingTimer <= blurEndTick)
+			{
+				// Sub-phase 3: Explosive 1-3f Dash-Blur reversing violently toward Screen (+Z, Right)
+				float u = (swingTimer - coilEndTick) / (float)Math.Max(1, blurEndTick - coilEndTick);
+				float dashEase = Ult3DProjection.EaseOutCubic(u);
+				PlayerPos3D = UltCoord3D.Lerp(coilPos, realApexPos, dashEase);
+				VisualDrawDirection = 1;
+				PlayerLeanShear = MathHelper.Lerp(-0.15f, 0.46f, dashEase);
+				PlayerBodyTilt = 0.08f * dashEase;
+				PlayerWidthScale = 1.08f;
+				PlayerSquashY = 0.90f;
+				ApplyDashStretch(prevPos, PlayerPos3D, 1.55f * MathF.Sin(MathHelper.Clamp(u, 0.1f, 0.95f) * MathHelper.Pi));
+				EmitDashEchoes(prevPos, PlayerPos3D, count: 3, starkLead: true, initialAlpha: 0.65f);
+				EmitWaterSprayAlongPath(prevPos, PlayerPos3D, 3);
+
+				if (!realRibbonSpawned)
+				{
+					realRibbonSpawned = true;
+					ActiveRibbons.Add(new UltSlashRibbon3D
+					{
+						Center3D = Screen3D(18f, -2f, 20f),
+						AxisU3D = Screen3D(0.88f, -0.04f, 0.47f),
+						AxisV3D = Screen3D(-0.45f, 0.12f, 0.89f),
+						StartAngle = MathHelper.ToRadians(-140f),
+						EndAngle = MathHelper.ToRadians(28f),
+						RadiusStart = 175f,
+						RadiusEnd = 245f,
+						WidthStart = 76f,
+						WidthEnd = 132f,
+						ZBiasEnd = 148f,
+						Thick = 0.62f,
+						Seed = 0.31f,
+						Age = 0,
+						MaxAge = 26,
+						SweepFrames = Math.Max(2, blurEndTick - coilEndTick),
+						Opacity = 1.0f,
+						RazorWiden = 0.48f,
+						IsPreemptive = false,
+						IsResurge = false,
+						DepthDimBias = 0f
+					});
+					SpawnWaterRipple(new UltCoord3D(realApexPos.F, WaterPlaneU, realApexPos.Z), 190f, 34, 0.85f, doubleRing: true);
+				}
+
+				// Torso-first lag: hilt leads while blade tip whips across the foreground
+				float whipT = MathHelper.Clamp(u * 1.18f - 0.12f, 0f, 1f);
+				UltCoord3D bladeDir = UltCoord3D.Lerp(Screen3D(-0.85f, -0.10f, -0.48f), Screen3D(0.92f, 0.08f, 0.38f), Ult3DProjection.EaseOutCubic(whipT))
+					.SafeNormalize(Screen3D(1f, 0f, 0.4f));
+				SetBladeFromDirection(PlayerPos3D + Screen3D(10f, -2f, 14f), bladeDir, BaseBladeLength3D * 1.06f, Screen3D(0f, 0.94f, -0.34f));
+				BladeGlowIntensity = 1.05f;
+			}
+			else
+			{
+				// Sub-phase 4: Held Zanshin follow-through pivoting smoothly on lead foot in foreground +Z
+				float z = (swingTimer - blurEndTick) / (float)Math.Max(1, swingDuration - blurEndTick);
+				float settle = Ult3DProjection.EaseOutCubic(z);
+				PlayerPos3D = UltCoord3D.Lerp(realApexPos, zanshinEndPos, settle);
+				VisualDrawDirection = 1;
+				PlayerLeanShear = MathHelper.Lerp(0.46f, 0.22f, settle);
+				PlayerBodyTilt = MathHelper.Lerp(0.08f, 0.02f, settle);
+				PlayerWidthScale = 1f;
+				PlayerSquashY = MathHelper.Lerp(0.88f, 0.92f, settle);
+				PlayerStretchAmount = 0f;
+
+				UltCoord3D followDir = UltCoord3D.Lerp(Screen3D(0.92f, 0.08f, 0.38f), Screen3D(0.76f, -0.14f, -0.63f), settle)
+					.SafeNormalize(Screen3D(0.8f, -0.1f, -0.5f));
+				SetBladeFromDirection(PlayerPos3D + Screen3D(8f, -3f, 8f), followDir, BaseBladeLength3D, Screen3D(0.2f, 0.92f, -0.32f));
+				BladeGlowIntensity = MathHelper.Lerp(0.85f, 0.38f, settle);
+			}
+
+			PlayerVel3D = PlayerPos3D - prevPos;
+		}
+
+		private void EvaluateRainblade2(UltCoord3D prevPos)
+		{
+			float preFwd = ResolvePreemptiveForwardOffset(56f);
+			UltCoord3D preLowPos = new(preFwd, -68f, 172f);
+			UltCoord3D coilLowPos = Screen3D(38f, -76f, 174f);
+			UltCoord3D skyApexPos = Screen3D(-22f, 136f, -295f);
+			UltCoord3D skyZanshinPos = Screen3D(-24f, 138f, -298f);
+
+			if (swingTimer <= prePhaseEndTick)
+			{
+				// Sub-phase 1: Committed Forward-Low-to-Screen (+F, -U, +Z) preemptive draw-slash across enemy plane
+				float p = swingTimer / (float)Math.Max(1, prePhaseEndTick);
+				float dropEase = Ult3DProjection.EaseOutCubic(MathHelper.Clamp(p * 1.45f, 0f, 1f));
+
+				if (swingTimer == 1)
+				{
+					SoundEngine.PlaySound(WeepSound.KatanaB with { Volume = 0.62f, Pitch = 0.28f }, Owner.Center);
+					SpawnWaterRipple(new UltCoord3D(stageStartPos3D.F, WaterPlaneU, stageStartPos3D.Z), 110f, 24, 0.60f, doubleRing: false);
+				}
+
+				PlayerPos3D = UltCoord3D.Lerp(stageStartPos3D, preLowPos, dropEase);
+				VisualDrawDirection = LockedFacingDir;
+				PlayerLeanShear = MathHelper.Lerp(stageStartLean, 0.36f * LockedFacingDir, dropEase);
+				PlayerBodyTilt = 0.06f * LockedFacingDir * dropEase;
+				PlayerWidthScale = 1f;
+				PlayerSquashY = MathHelper.Lerp(0.92f, 0.80f, dropEase);
+
+				if (p < 0.72f)
+				{
+					ApplyDashStretch(prevPos, PlayerPos3D, 0.92f * MathF.Sin(MathHelper.Clamp(p / 0.72f, 0f, 1f) * MathHelper.Pi));
+					if (swingTimer % 2 == 1)
+						EmitDashEchoes(prevPos, PlayerPos3D, count: 1, starkLead: false, initialAlpha: 0.42f);
+					EmitWaterSprayAlongPath(prevPos, PlayerPos3D, 2);
+				}
+				else
+				{
+					PlayerStretchAmount = 0f;
+				}
+
+				if (!preRibbonSpawned)
+				{
+					preRibbonSpawned = true;
+					ActiveRibbons.Add(new UltSlashRibbon3D
+					{
+						Center3D = new UltCoord3D(preFwd * 0.74f, -38f, 118f),
+						AxisU3D = new UltCoord3D(0.86f, -0.30f, 0.41f),
+						AxisV3D = new UltCoord3D(-0.32f, -0.78f, 0.54f),
+						StartAngle = MathHelper.ToRadians(-85f),
+						EndAngle = MathHelper.ToRadians(42f),
+						RadiusStart = 135f,
+						RadiusEnd = 175f,
+						WidthStart = 48f,
+						WidthEnd = 64f,
+						ZBiasEnd = 48f,
+						Thick = 0.48f,
+						Seed = 0.53f,
+						Age = 0,
+						MaxAge = Math.Max(10, prePhaseEndTick + 4),
+						SweepFrames = Math.Max(2, prePhaseEndTick / 2),
+						Opacity = 0.84f,
+						RazorWiden = 0.28f,
+						IsPreemptive = true,
+						IsResurge = false,
+						DepthDimBias = 0f
+					});
+				}
+
+				float whipT = MathHelper.Clamp(p * 1.35f, 0f, 1f);
+				UltCoord3D lowDir = UltCoord3D.Lerp(new UltCoord3D(0.55f, 0.34f, -0.15f), new UltCoord3D(0.84f, -0.38f, 0.38f), Ult3DProjection.EaseOutCubic(whipT))
+					.SafeNormalize(new UltCoord3D(0.84f, -0.38f, 0.38f));
+				SetBladeFromDirection(PlayerPos3D + new UltCoord3D(6f, -6f, 10f), lowDir, BaseBladeLength3D * 1.02f, new UltCoord3D(0f, 0.9f, 0.4f));
+				BladeGlowIntensity = 0.48f;
+			}
+			else if (swingTimer < coilEndTick)
+			{
+				// Sub-phase 2: Tight coiled low-draw crouch in Bottom-Right (-U, +Z)
+				if (!windupAudioPlayed)
+				{
+					windupAudioPlayed = true;
+					PlayWindupSounds();
+					SpawnWaterRipple(new UltCoord3D(coilLowPos.F, WaterPlaneU, coilLowPos.Z), 130f, 28, 0.68f, doubleRing: true);
+				}
+
+				float c = (swingTimer - prePhaseEndTick) / (float)Math.Max(1, coilEndTick - prePhaseEndTick);
+				PlayerPos3D = UltCoord3D.Lerp(preLowPos, coilLowPos, c);
+				VisualDrawDirection = -1;
+				PlayerLeanShear = MathHelper.Lerp(0.30f * LockedFacingDir, 0.14f, c);
+				PlayerBodyTilt = -0.10f * c;
+				PlayerWidthScale = 1f;
+				PlayerSquashY = MathHelper.Lerp(0.80f, 0.76f, c);
+				PlayerStretchAmount = 0f;
+				BladeGlowIntensity = 0.60f + 0.25f * c;
+
+				SetBladeFromDirection(PlayerPos3D + Screen3D(4f, -8f, 8f), Screen3D(0.78f, -0.45f, 0.42f), BaseBladeLength3D, Screen3D(0f, 0.9f, 0.3f));
+			}
+			else if (swingTimer <= blurEndTick)
+			{
+				// Sub-phase 3: Explosive rising diagonal cleave from Bottom-Right (-U, +Z) up into Upper-Left (+U, -Z)
+				float u = (swingTimer - coilEndTick) / (float)Math.Max(1, blurEndTick - coilEndTick);
+				float dashEase = Ult3DProjection.EaseOutCubic(u);
+				PlayerPos3D = UltCoord3D.Lerp(coilLowPos, skyApexPos, dashEase);
+				VisualDrawDirection = -1;
+				PlayerLeanShear = MathHelper.Lerp(0.10f, -0.38f, dashEase);
+				PlayerBodyTilt = -0.22f * MathF.Sin(dashEase * MathHelper.PiOver2);
+				PlayerWidthScale = 1.05f;
+				PlayerSquashY = MathHelper.Lerp(0.82f, 1.06f, dashEase);
+				ApplyDashStretch(prevPos, PlayerPos3D, 1.65f * MathF.Sin(MathHelper.Clamp(u, 0.1f, 0.95f) * MathHelper.Pi));
+				EmitDashEchoes(prevPos, PlayerPos3D, count: 3, starkLead: true, initialAlpha: 0.68f);
+				EmitWaterSprayAlongPath(prevPos, PlayerPos3D, 3);
+
+				if (!realRibbonSpawned)
+				{
+					realRibbonSpawned = true;
+					ActiveRibbons.Add(new UltSlashRibbon3D
+					{
+						Center3D = Screen3D(8f, 24f, -65f),
+						AxisU3D = Screen3D(0.60f, -0.68f, 0.42f),
+						AxisV3D = Screen3D(-0.55f, 0.56f, -0.62f),
+						StartAngle = MathHelper.ToRadians(-25f),
+						EndAngle = MathHelper.ToRadians(125f),
+						RadiusStart = 215f,
+						RadiusEnd = 265f,
+						WidthStart = 115f,
+						WidthEnd = 68f,
+						ZBiasEnd = -230f,
+						Thick = 0.64f,
+						Seed = 0.67f,
+						Age = 0,
+						MaxAge = 28,
+						SweepFrames = Math.Max(2, blurEndTick - coilEndTick),
+						Opacity = 1.0f,
+						RazorWiden = 0.48f,
+						IsPreemptive = false,
+						IsResurge = false,
+						DepthDimBias = 0.12f
+					});
+					SpawnWaterRipple(new UltCoord3D(coilLowPos.F, WaterPlaneU, coilLowPos.Z), 175f, 30, 0.80f, doubleRing: true);
+				}
+
+				float whipT = MathHelper.Clamp(u * 1.15f - 0.10f, 0f, 1f);
+				UltCoord3D bladeDir = UltCoord3D.Lerp(Screen3D(0.75f, -0.45f, 0.48f), Screen3D(-0.62f, 0.68f, -0.38f), Ult3DProjection.EaseOutCubic(whipT))
+					.SafeNormalize(Screen3D(-0.6f, 0.7f, -0.4f));
+				SetBladeFromDirection(PlayerPos3D + Screen3D(-6f, 6f, -8f), bladeDir, BaseBladeLength3D * 1.08f, Screen3D(0.6f, 0.4f, 0.6f));
+				BladeGlowIntensity = 1.08f;
+			}
+			else
+			{
+				// Sub-phase 4: Held Upper-Left Zanshin end-pose storing gravity & rotational torque for Rainblade 3
+				float z = (swingTimer - blurEndTick) / (float)Math.Max(1, swingDuration - blurEndTick);
+				float settle = Ult3DProjection.EaseOutCubic(z);
+				PlayerPos3D = UltCoord3D.Lerp(skyApexPos, skyZanshinPos, settle);
+				VisualDrawDirection = -1;
+				PlayerLeanShear = MathHelper.Lerp(-0.38f, -0.22f, settle);
+				PlayerBodyTilt = MathHelper.Lerp(-0.20f, -0.10f, settle);
+				PlayerWidthScale = 1f;
+				PlayerSquashY = MathHelper.Lerp(1.04f, 0.96f, settle);
+				PlayerStretchAmount = 0f;
+
+				// Odachi angled high behind the opposite shoulder, ready to plunge downward in Stage 2 -> 3
+				UltCoord3D poisedHighDir = UltCoord3D.Lerp(Screen3D(-0.62f, 0.68f, -0.38f), Screen3D(0.55f, 0.74f, -0.38f), settle)
+					.SafeNormalize(Screen3D(0.55f, 0.74f, -0.38f));
+				SetBladeFromDirection(PlayerPos3D + Screen3D(4f, 10f, -6f), poisedHighDir, BaseBladeLength3D, Screen3D(0.2f, 0.4f, 0.85f));
+				BladeGlowIntensity = MathHelper.Lerp(0.85f, 0.42f, settle);
+			}
+
+			PlayerVel3D = PlayerPos3D - prevPos;
+		}
+
+		private void EvaluateRainblade3(UltCoord3D prevPos)
+		{
+			// Chains directly from Upper-Left (+U, -Z) end-pose of Rainblade 2 with ZERO preemptive slash!
+			UltCoord3D coilHighPos = Screen3D(-20f, 144f, -296f);
+			UltCoord3D crashLowPos = Screen3D(42f, -78f, 178f);
+			UltCoord3D zanshinLowPos = Screen3D(44f, -82f, 174f);
+
+			if (swingTimer < coilEndTick)
+			{
+				// Sub-phase 1: Tight torque spin/step-through high in Upper-Left (+U, -Z)
+				float c = swingTimer / (float)Math.Max(1, coilEndTick);
+				float easeC = Ult3DProjection.EaseOutCubic(c);
+				PlayerPos3D = UltCoord3D.Lerp(stageStartPos3D, coilHighPos, easeC);
+				VisualDrawDirection = 1;
+				PlayerLeanShear = MathHelper.Lerp(stageStartLean, -0.24f, easeC);
+				PlayerBodyTilt = MathHelper.Lerp(-0.10f, 0.14f, easeC);
+				PlayerWidthScale = 1f;
+				PlayerSquashY = MathHelper.Lerp(0.96f, 0.88f, easeC);
+				PlayerStretchAmount = 0f;
+				BladeGlowIntensity = 0.60f + 0.30f * easeC;
+
+				UltCoord3D windDir = UltCoord3D.Lerp(Screen3D(0.55f, 0.74f, -0.38f), Screen3D(-0.55f, 0.78f, -0.28f), easeC)
+					.SafeNormalize(Screen3D(-0.5f, 0.8f, -0.3f));
+				SetBladeFromDirection(PlayerPos3D + Screen3D(-4f, 10f, -4f), windDir, BaseBladeLength3D, Screen3D(0.3f, 0.2f, 0.9f));
+			}
+			else if (swingTimer <= blurEndTick)
+			{
+				// Sub-phase 2: Blinding plunging dash-blur from Upper-Left (+U, -Z) crashing down-outward to Bottom-Right (-U, +Z)
+				float u = (swingTimer - coilEndTick) / (float)Math.Max(1, blurEndTick - coilEndTick);
+				float dashEase = Ult3DProjection.EaseOutCubic(u);
+				PlayerPos3D = UltCoord3D.Lerp(coilHighPos, crashLowPos, dashEase);
+				VisualDrawDirection = 1;
+				PlayerLeanShear = MathHelper.Lerp(-0.20f, 0.50f, dashEase);
+				PlayerBodyTilt = 0.24f * MathF.Sin(dashEase * MathHelper.PiOver2);
+				PlayerWidthScale = 1.12f;
+				PlayerSquashY = MathHelper.Lerp(0.92f, 0.82f, dashEase);
+				ApplyDashStretch(prevPos, PlayerPos3D, 1.75f * MathF.Sin(MathHelper.Clamp(u, 0.1f, 0.95f) * MathHelper.Pi));
+				EmitDashEchoes(prevPos, PlayerPos3D, count: 4, starkLead: true, initialAlpha: 0.74f);
+				EmitWaterSprayAlongPath(prevPos, PlayerPos3D, 4);
+
+				if (!realRibbonSpawned)
+				{
+					realRibbonSpawned = true;
+					ActiveRibbons.Add(new UltSlashRibbon3D
+					{
+						Center3D = Screen3D(12f, 20f, -40f),
+						AxisU3D = Screen3D(-0.52f, 0.65f, -0.55f),
+						AxisV3D = Screen3D(0.68f, -0.55f, 0.48f),
+						StartAngle = MathHelper.ToRadians(-10f),
+						EndAngle = MathHelper.ToRadians(142f),
+						RadiusStart = 200f,
+						RadiusEnd = 275f,
+						WidthStart = 72f,
+						WidthEnd = 152f,
+						ZBiasEnd = 225f,
+						Thick = 0.68f,
+						Seed = 0.81f,
+						Age = 0,
+						MaxAge = 32,
+						SweepFrames = Math.Max(2, blurEndTick - coilEndTick),
+						Opacity = 1.0f,
+						RazorWiden = 0.55f,
+						IsPreemptive = false,
+						IsResurge = false,
+						DepthDimBias = 0f
+					});
+					SpawnWaterRipple(new UltCoord3D(crashLowPos.F, WaterPlaneU, crashLowPos.Z), 220f, 36, 0.92f, doubleRing: true);
+				}
+
+				float whipT = MathHelper.Clamp(u * 1.18f - 0.12f, 0f, 1f);
+				UltCoord3D bladeDir = UltCoord3D.Lerp(Screen3D(-0.55f, 0.78f, -0.28f), Screen3D(0.84f, -0.42f, 0.34f), Ult3DProjection.EaseOutCubic(whipT))
+					.SafeNormalize(Screen3D(0.8f, -0.4f, 0.35f));
+				SetBladeFromDirection(PlayerPos3D + Screen3D(12f, -6f, 14f), bladeDir, BaseBladeLength3D * 1.12f, Screen3D(0.35f, 0.82f, -0.45f));
+				BladeGlowIntensity = 1.18f;
+			}
+			else
+			{
+				// Sub-phase 3: Hardest Rainblade hitstop & lower/wider crouched Zanshin in Bottom-Right foreground
+				float z = (swingTimer - blurEndTick) / (float)Math.Max(1, swingDuration - blurEndTick);
+				float settle = Ult3DProjection.EaseOutCubic(z);
+				PlayerPos3D = UltCoord3D.Lerp(crashLowPos, zanshinLowPos, settle);
+				VisualDrawDirection = 1;
+				PlayerLeanShear = MathHelper.Lerp(0.50f, 0.36f, settle);
+				PlayerBodyTilt = MathHelper.Lerp(0.20f, 0.08f, settle);
+				PlayerWidthScale = 1.06f;
+				PlayerSquashY = MathHelper.Lerp(0.80f, 0.78f, settle);
+				PlayerStretchAmount = 0f;
+
+				UltCoord3D extDir = Screen3D(0.86f, -0.36f, 0.35f).SafeNormalize(Screen3D(0.86f, -0.36f, 0.35f));
+				SetBladeFromDirection(PlayerPos3D + Screen3D(12f, -6f, 12f), extDir, BaseBladeLength3D * 1.05f, Screen3D(0.35f, 0.82f, -0.45f));
+				BladeGlowIntensity = MathHelper.Lerp(0.95f, 0.45f, settle);
+			}
+
+			PlayerVel3D = PlayerPos3D - prevPos;
+		}
+
+		private void EvaluateStygianResurge(UltCoord3D prevPos)
+		{
+			UltCoord3D windupPoisedPos = Screen3D(36f, -10f, 166f);
+			UltCoord3D flashEndLeftPos = Screen3D(-34f, 12f, -328f);
+			UltCoord3D finalSettleLeftPos = Screen3D(-36f, 12f, -330f);
+
+			if (swingTimer < coilEndTick)
+			{
+				// Sub-phase 1: Calm Lethal Windup in Foreground Right (+Z)
+				float c = swingTimer / (float)Math.Max(1, coilEndTick);
+				float riseEase = Ult3DProjection.EaseOutCubic(MathHelper.Clamp(c * 1.4f, 0f, 1f));
+				PlayerPos3D = UltCoord3D.Lerp(stageStartPos3D, windupPoisedPos, riseEase);
+				VisualDrawDirection = -1;
+				PlayerLeanShear = MathHelper.Lerp(stageStartLean, 0.08f, riseEase);
+				PlayerBodyTilt = MathHelper.Lerp(0.08f, 0f, riseEase);
+				PlayerWidthScale = 1f;
+				PlayerSquashY = MathHelper.Lerp(0.78f, 1.0f, riseEase);
+				PlayerStretchAmount = 0f;
+
+				// Draw Naught cleanly back across body while crimson energy condenses to a razor-thin glow
+				UltCoord3D drawBackDir = UltCoord3D.Lerp(Screen3D(0.75f, -0.32f, 0.35f), Screen3D(0.88f, -0.18f, 0.42f), riseEase)
+					.SafeNormalize(Screen3D(0.88f, -0.18f, 0.42f));
+				SetBladeFromDirection(PlayerPos3D + Screen3D(6f, -2f, 10f), drawBackDir, BaseBladeLength3D * 1.04f, Screen3D(0.15f, 0.92f, -0.35f));
+				BladeGlowIntensity = 0.55f + 0.85f * c;
+
+				if (swingTimer == 2)
+				{
+					SpawnWaterRipple(new UltCoord3D(windupPoisedPos.F, WaterPlaneU, windupPoisedPos.Z), 120f, 34, 0.45f, doubleRing: false);
+				}
+
+				if (!Main.dedServ && swingTimer % 2 == 0)
+				{
+					Vector2 tipWorld = Ult3DProjection.Project(Tip3D, SafeFrameOrigin, LockedFacingDir, out _);
+					Vector2 hiltWorld = Ult3DProjection.Project(Hilt3D, SafeFrameOrigin, LockedFacingDir, out _);
+					Vector2 edgePos = Vector2.Lerp(hiltWorld, tipWorld, Main.rand.NextFloat());
+					PRTLoader.NewParticle<VoidSparkPRT>(edgePos + Main.rand.NextVector2Circular(12f, 12f), (hiltWorld - edgePos).SafeNormalize(Vector2.Zero) * 1.8f, new Color(255, 65, 95), 0.65f);
+				}
+
+				// Sharp razor condensation gleam right before the instantaneous flash-step
+				if (c >= 0.70f)
+				{
+					Vector2 hiltWorld = Ult3DProjection.Project(Hilt3D, SafeFrameOrigin, LockedFacingDir, out float persp);
+					Vector2 tipWorld = Ult3DProjection.Project(Tip3D, SafeFrameOrigin, LockedFacingDir, out _);
+					float gProg = (c - 0.70f) / 0.30f;
+					float gAlpha = MathF.Sin(gProg * MathHelper.Pi);
+					ActiveGleams.Add(new UltGleamFlash3D
+					{
+						WorldPos = Vector2.Lerp(hiltWorld, tipWorld, 0.35f),
+						AxisAngle = (tipWorld - hiltWorld).ToRotation(),
+						Alpha = gAlpha * 0.95f,
+						Scale = persp * 0.85f
+					});
+					if (!resurgeWindupFlashSpawned)
+					{
+						resurgeWindupFlashSpawned = true;
+						SoundEngine.PlaySound(SoundID.Item29 with { Pitch = 0.65f, Volume = 0.65f }, Owner.Center);
+					}
+				}
+			}
+			else if (swingTimer <= blurEndTick)
+			{
+				// Sub-phase 2: Instantaneous 2-frame Flash-Step Smear from Right (+Z) all the way to Left (-Z)
+				float u = (swingTimer - coilEndTick) / (float)Math.Max(1, blurEndTick - coilEndTick);
+				float dashEase = Ult3DProjection.EaseOutCubic(u);
+				PlayerPos3D = UltCoord3D.Lerp(windupPoisedPos, flashEndLeftPos, dashEase);
+				VisualDrawDirection = -1;
+				PlayerLeanShear = -0.52f;
+				PlayerBodyTilt = -0.14f;
+				PlayerWidthScale = 1.0f;
+				PlayerSquashY = 0.92f;
+				ApplyDashStretch(prevPos, PlayerPos3D, 2.45f);
+				EmitDashEchoes(prevPos, PlayerPos3D, count: 5, starkLead: true, initialAlpha: 0.85f);
+				EmitWaterSprayAlongPath(prevPos, PlayerPos3D, 6);
+
+				if (!realRibbonSpawned)
+				{
+					realRibbonSpawned = true;
+					ActiveRibbons.Add(new UltSlashRibbon3D
+					{
+						Center3D = Screen3D(0f, 0f, -60f),
+						AxisU3D = Screen3D(0.90f, 0.02f, 0.44f),
+						AxisV3D = Screen3D(-0.44f, 0.05f, 0.90f),
+						StartAngle = MathHelper.ToRadians(25f),
+						EndAngle = MathHelper.ToRadians(185f),
+						RadiusStart = 285f,
+						RadiusEnd = 335f,
+						WidthStart = 175f,
+						WidthEnd = 105f,
+						ZBiasEnd = -280f,
+						Thick = 0.72f,
+						Seed = 0.95f,
+						Age = 0,
+						MaxAge = 36,
+						SweepFrames = 2,
+						Opacity = 1.0f,
+						RazorWiden = 0.60f,
+						IsPreemptive = false,
+						IsResurge = true,
+						DepthDimBias = 0f
+					});
+					SpawnWaterRipple(new UltCoord3D(windupPoisedPos.F, WaterPlaneU, windupPoisedPos.Z), 230f, 36, 0.90f, doubleRing: true);
+					SpawnWaterRipple(new UltCoord3D(flashEndLeftPos.F, WaterPlaneU, flashEndLeftPos.Z), 190f, 34, 0.75f, doubleRing: true);
+				}
+
+				UltCoord3D cleaveBladeDir = UltCoord3D.Lerp(Screen3D(0.88f, -0.18f, 0.42f), Screen3D(-0.92f, 0.06f, -0.38f), dashEase)
+					.SafeNormalize(Screen3D(-0.92f, 0.06f, -0.38f));
+				SetBladeFromDirection(PlayerPos3D + Screen3D(-8f, 0f, -6f), cleaveBladeDir, BaseBladeLength3D * 1.15f, Screen3D(0f, 1f, 0.15f));
+				BladeGlowIntensity = 1.35f;
+			}
+			else
+			{
+				// Sub-phase 3: Composed follow-through in deep -Z Left
+				float z = (swingTimer - blurEndTick) / (float)Math.Max(1, swingDuration - blurEndTick);
+				float settle = Ult3DProjection.EaseOutCubic(z);
+				PlayerPos3D = UltCoord3D.Lerp(flashEndLeftPos, finalSettleLeftPos, settle);
+				VisualDrawDirection = -1;
+				PlayerLeanShear = MathHelper.Lerp(-0.46f, -0.18f, settle);
+				PlayerBodyTilt = MathHelper.Lerp(-0.12f, 0f, settle);
+				PlayerWidthScale = 1f;
+				PlayerSquashY = MathHelper.Lerp(0.90f, 0.94f, settle);
+				PlayerStretchAmount = 0f;
+
+				UltCoord3D followDir = Screen3D(-0.88f, -0.22f, -0.42f).SafeNormalize(Screen3D(-0.88f, -0.22f, -0.42f));
+				SetBladeFromDirection(PlayerPos3D + Screen3D(-6f, -4f, -6f), followDir, BaseBladeLength3D, Screen3D(0f, 0.9f, 0.35f));
+				BladeGlowIntensity = MathHelper.Lerp(1.0f, 0.40f, settle);
+			}
+
+			PlayerVel3D = PlayerPos3D - prevPos;
+		}
+
+		private void SetBladeFromDirection(UltCoord3D hilt, UltCoord3D dir3D, float length, UltCoord3D broadsideHint)
+		{
+			Hilt3D = hilt;
+			Tip3D = hilt + dir3D * length;
+			BladeBroadsideNormal3D = broadsideHint;
+		}
+
+		private void ApplyDashStretch(UltCoord3D fromPos, UltCoord3D toPos, float amount)
+		{
+			Vector2 p0 = Ult3DProjection.Project(fromPos, SafeFrameOrigin, LockedFacingDir, out _);
+			Vector2 p1 = Ult3DProjection.Project(toPos, SafeFrameOrigin, LockedFacingDir, out _);
+			Vector2 delta = p1 - p0;
+			PlayerStretchDir2D = delta.LengthSquared() > 1f ? Vector2.Normalize(delta) : new Vector2(VisualDrawDirection, 0f);
+			PlayerStretchAmount = Math.Max(0f, amount);
+		}
+
+		private void EmitDashEchoes(UltCoord3D fromPos, UltCoord3D toPos, int count, bool starkLead, float initialAlpha)
+		{
+			if (count <= 0)
+				return;
+
+			for (int i = 0; i < count; i++)
+			{
+				float t = i / (float)count;
+				UltCoord3D samplePos = UltCoord3D.Lerp(fromPos, toPos, t);
+				Afterimages.Add(new UltAfterimage3D
+				{
+					Pos3D = samplePos,
+					LeanShear = PlayerLeanShear * MathHelper.Lerp(0.75f, 1.05f, t),
+					BodyTilt = PlayerBodyTilt,
+					WidthScale = PlayerWidthScale,
+					SquashY = PlayerSquashY,
+					StretchDir2D = PlayerStretchDir2D,
+					StretchAmount = PlayerStretchAmount * MathHelper.Lerp(0.55f, 1.0f, t),
+					DrawDirection = VisualDrawDirection,
+					Age = 0,
+					MaxAge = starkLead ? 15 : 11,
+					InitialAlpha = initialAlpha * MathHelper.Lerp(0.55f, 1.0f, t),
+					StarkWhiteLead = starkLead && i >= count - 2
+				});
+			}
+		}
+
+		private void EmitWaterSprayAlongPath(UltCoord3D fromPos, UltCoord3D toPos, int sprayCount)
+		{
+			if (Main.dedServ)
+				return;
+
+			Vector2 p0 = Ult3DProjection.Project(fromPos, SafeFrameOrigin, LockedFacingDir, out _);
+			Vector2 p1 = Ult3DProjection.Project(toPos, SafeFrameOrigin, LockedFacingDir, out _);
+			Vector2 velDir = (p1 - p0).SafeNormalize(new Vector2(VisualDrawDirection, 0f));
+
+			for (int i = 0; i < sprayCount; i++)
+			{
+				float t = Main.rand.NextFloat();
+				Vector2 pos = Vector2.Lerp(p0, p1, t) + Main.rand.NextVector2Circular(18f, 18f);
+				Vector2 vel = velDir * Main.rand.NextFloat(3.5f, 9f) + new Vector2(Main.rand.NextFloat(-2f, 2f), Main.rand.NextFloat(-4f, 1f));
+				if (i % 2 == 0)
+					PRTLoader.NewParticle<VoidSparkPRT>(pos, vel, new Color(255, 45, 80), Main.rand.NextFloat(0.7f, 1.25f));
+				else
+					PRTLoader.NewParticle<CrimsonPetalPRT>(pos, vel * 0.7f, new Color(245, 30, 55, 230), Main.rand.NextFloat(0.7f, 1.15f));
+			}
+		}
+
+		private void SpawnWaterRipple(UltCoord3D center3D, float maxRadius, int maxAge, float opacity, bool doubleRing)
+		{
+			WaterRipples.Add(new UltWaterRipple3D
+			{
+				Center3D = center3D,
+				MaxRadius = maxRadius,
+				Age = 0,
+				MaxAge = maxAge,
+				Opacity = opacity,
+				DoubleRing = doubleRing
+			});
 		}
 
 		private static bool IsValidUltimateTarget(NPC npc)
@@ -670,11 +1912,9 @@ namespace WeepForTheDeparted.Content.Projectiles
 
 		private void SpawnImpactVisuals(Vector2 impactPos, bool isResurge)
 		{
-			// 1. InnoVault Dimensional Explosion PRT (Additive)
 			float expScale = (isResurge ? 1.8f : 1.25f) * Main.rand.NextFloat(0.95f, 1.30f);
 			PRTLoader.NewParticle<DimensionalExplosionPRT>(impactPos, Vector2.Zero, new Color(255, 45, 75), expScale);
 
-			// 2. Erupting crimson petals & void sparks
 			int petalCount = isResurge ? 16 : 8;
 			for (int i = 0; i < petalCount; i++)
 			{
@@ -691,9 +1931,118 @@ namespace WeepForTheDeparted.Content.Projectiles
 			}
 		}
 
+		private void SpawnPreemptiveImpactVisuals(Vector2 impactPos, float angle)
+		{
+			if (Main.dedServ)
+				return;
+
+			Vector2 cutDir = angle.ToRotationVector2();
+			for (int i = 0; i < 4; i++)
+			{
+				Vector2 sparkVel = cutDir * Main.rand.NextFloat(5.5f, 10.5f) + Main.rand.NextVector2Circular(2.5f, 2.5f);
+				Color sparkCol = i % 2 == 0 ? new Color(255, 65, 95) : new Color(255, 200, 215);
+				PRTLoader.NewParticle<VoidSparkPRT>(impactPos + Main.rand.NextVector2Circular(10f, 10f), sparkVel, sparkCol, Main.rand.NextFloat(0.65f, 1.05f));
+			}
+
+			for (int i = 0; i < 2; i++)
+			{
+				Vector2 petalVel = cutDir * Main.rand.NextFloat(3.5f, 6.5f) + Main.rand.NextVector2Circular(2f, 2f);
+				PRTLoader.NewParticle<CrimsonPetalPRT>(impactPos, petalVel, new Color(245, 35, 70, 220), Main.rand.NextFloat(0.65f, 0.95f));
+			}
+
+			for (int d = 0; d < 5; d++)
+			{
+				Vector2 dustVel = cutDir * Main.rand.NextFloat(4f, 8f) + Main.rand.NextVector2Circular(2f, 2f);
+				Dust dust = Dust.NewDustPerfect(impactPos, DustID.CrimsonTorch, dustVel, 100, default, 1.15f);
+				dust.noGravity = true;
+			}
+		}
+
+		private void ExecutePreemptiveRainblade(int preIndex, float angle)
+		{
+			SoundEngine.PlaySound(WeepSound.KatanaHit with { Volume = 0.72f, Pitch = 0.22f + preIndex * 0.08f }, Owner.Center);
+			SoundEngine.PlaySound(SoundID.Item71 with { Pitch = 0.50f, Volume = 0.55f }, Owner.Center);
+
+			var naughtPlayer = Owner.GetModPlayer<NaughtPlayer>();
+			if (naughtPlayer != null && Owner.whoAmI == Main.myPlayer && !Main.dedServ)
+			{
+				// Subtle ~30% directional recoil along the forward-depth cut vector (zero random shake)
+				Vector2 preRecoil = new(LockedFacingDir * 4.5f, preIndex == 2 ? 4f : -1.5f);
+				naughtPlayer.AddUltCameraRecoil(preRecoil);
+				naughtPlayer.PunchUltCameraZoom(-0.08f);
+			}
+
+			NihilityDomainSystem.AnomalyPulse = Math.Max(NihilityDomainSystem.AnomalyPulse, 0.36f);
+			hitstopFrames = 1;
+
+			NPC primaryTarget = FindPrimaryTarget();
+			Vector2 forwardAnchor = UltOrigin + new Vector2(LockedFacingDir * 120f, preIndex == 2 ? 28f : -6f);
+			Vector2 cutCenter = primaryTarget != null ? primaryTarget.Center : forwardAnchor;
+
+			ActiveSeams.Add(new UltCleaveSeam3D
+			{
+				WorldCenter = cutCenter,
+				Angle = angle,
+				HalfLength = Main.screenWidth * 0.42f,
+				HalfWidth = 8.5f,
+				Seed = 0.13f * preIndex,
+				Age = 0,
+				MaxAge = 20,
+				PersistUntilSnap = false
+			});
+
+			if (naughtPlayer != null)
+			{
+				Projectile.CritChance = naughtPlayer.GetNaughtCritChance();
+			}
+
+			int baseDamage = Projectile.damage > 0 ? Projectile.damage : (naughtPlayer?.GetNaughtDamage() ?? 25);
+			float preBaseMult = (naughtPlayer != null && naughtPlayer.HasEidolon3) ? 0.425f : 0.4125f;
+			int preDamage = Math.Max(1, (int)(baseDamage * preBaseMult));
+			int enemiesHit = 0;
+
+			// 25% base damage forward slash; consumes 0 Knots and avoids main-hit Ruin/Tide charm procs
+			for (int i = 0; i < Main.maxNPCs; i++)
+			{
+				NPC target = Main.npc[i];
+				if (IsValidUltimateTarget(target))
+				{
+					float dist = Vector2.Distance(Owner.MountedCenter, target.Center);
+					if (dist < 1800f)
+					{
+						if (!target.dontTakeDamage || target.type == NPCID.TargetDummy)
+						{
+							if (naughtPlayer != null)
+							{
+								naughtPlayer.StrikeNPC(
+									target,
+									preDamage,
+									LockedFacingDir,
+									crit: null,
+									knockBack: 2f,
+									sourceProj: Projectile,
+									isUltimate: true);
+							}
+							else
+							{
+								target.SimpleStrikeNPC(preDamage, LockedFacingDir, false, 2f, WeepCompatibility.TrueMelee);
+							}
+						}
+
+						SpawnPreemptiveImpactVisuals(target.Center, angle);
+						enemiesHit++;
+					}
+				}
+			}
+
+			if (enemiesHit == 0)
+			{
+				SpawnPreemptiveImpactVisuals(cutCenter, angle);
+			}
+		}
+
 		private void ExecuteRainblade(int index, float angle, float tilt)
 		{
-			// 1. Play Acheron Heavy Impact Slash Sounds (crisp razor steel + deep sub-bass boom)
 			if (index == 1)
 				SoundEngine.PlaySound(WeepSound.AcheronSlash1, Owner.Center);
 			else if (index == 2)
@@ -703,41 +2052,52 @@ namespace WeepForTheDeparted.Content.Projectiles
 
 			SoundEngine.PlaySound(SoundID.Item37 with { Pitch = 0.18f * index, Volume = 0.85f }, Owner.Center);
 
-			// 2. Heavy Directional Camera Punch & Physical Screen Shake
-			Main.instance.CameraModifiers.Add(new PunchCameraModifier(Owner.Center, angle.ToRotationVector2(), 22f + index * 4f, 8f, 20, 1600f, $"Rainblade{index}"));
-			NihilityDomainSystem.AnomalyPulse = 0.90f;
-			NihilityDomainSystem.NegativeFlash = 0.38f;
-
-			// 3. Physical Hitstop Micro-Pause (freezes frame for weighty blade bite)
-			hitstopFrames = 3;
-
-			// 4. Spawn 3D Crescent Slash Arc right now at the impact moment!
-			Vector2 slashCenter = Owner.MountedCenter + angle.ToRotationVector2() * 65f;
-			activeArcs.Add(new ActiveSlashArc
+			var naughtPlayer = Owner.GetModPlayer<NaughtPlayer>();
+			if (naughtPlayer != null && Owner.whoAmI == Main.myPlayer && !Main.dedServ)
 			{
-				Center = slashCenter,
-				Rotation = angle,
-				Radius = index == 3 ? 320f : 280f,
-				ArcSpan = index == 3 ? MathHelper.ToRadians(165f) : MathHelper.ToRadians(150f),
-				Type = index - 1,
-				Timer = 0,
-				MaxTime = 24,
-				Flip = index == 2 ? -Owner.direction : Owner.direction,
-				TiltX = tilt
-			});
+				Vector2 recoilVec = index switch
+				{
+					1 => new Vector2(14f, 2f),
+					2 => new Vector2(-12f, -15f),
+					_ => new Vector2(16f, 22f)
+				};
+				naughtPlayer.AddUltCameraRecoil(recoilVec);
+				naughtPlayer.PunchUltCameraZoom(index == 3 ? -0.45f : -0.28f);
+			}
+
+			NihilityDomainSystem.AnomalyPulse = index == 3 ? 1.0f : 0.90f;
+			NihilityDomainSystem.NegativeFlash = index == 3 ? 0.50f : 0.38f;
+
+			// Hardest hitstop of the 3 Rainblades on Rainblade 3
+			hitstopFrames = index == 3 ? 5 : 3;
 
 			NPC primaryTarget = FindPrimaryTarget();
-			Vector2 cutCenter = primaryTarget != null ? primaryTarget.Center : (Main.screenPosition + new Vector2(Main.screenWidth * 0.5f, Main.screenHeight * 0.5f));
+			Vector2 lockedCenter = naughtPlayer != null && naughtPlayer.UltCameraLocked
+				? naughtPlayer.UltLockedScreenPos + new Vector2(Main.screenWidth * 0.5f, Main.screenHeight * 0.5f)
+				: Main.screenPosition + new Vector2(Main.screenWidth * 0.5f, Main.screenHeight * 0.5f);
+			Vector2 cutCenter = primaryTarget != null ? primaryTarget.Center : lockedCenter;
 
-			Vector2 dir = angle.ToRotationVector2();
-			Vector2 slashStart = cutCenter - dir * (Main.screenWidth * 0.85f);
-			Vector2 slashEnd = cutCenter + dir * (Main.screenWidth * 0.85f);
-			activeSlashes.Add(new SlashRecord(slashStart, slashEnd, Timer, index == 3 ? new Color(255, 30, 45) : new Color(225, 90, 255)));
+			// Crisp shader-rendered dimensional scar across cut angle
+			ActiveSeams.Add(new UltCleaveSeam3D
+			{
+				WorldCenter = cutCenter,
+				Angle = angle,
+				HalfLength = Main.screenWidth * 0.72f,
+				HalfWidth = index == 3 ? 28f : 18f,
+				Seed = 0.23f * index,
+				Age = 0,
+				MaxAge = 44,
+				PersistUntilSnap = false
+			});
 
-			// Spawn flower bloom and explosion on target!
 			SpawnImpactVisuals(cutCenter, false);
 
-			int baseDamage = Projectile.damage;
+			if (naughtPlayer != null)
+			{
+				Projectile.CritChance = naughtPlayer.GetNaughtCritChance();
+			}
+
+			int baseDamage = Projectile.damage > 0 ? Projectile.damage : (naughtPlayer?.GetNaughtDamage() ?? 25);
 			int enemiesHit = 0;
 
 			for (int i = 0; i < Main.maxNPCs; i++)
@@ -751,28 +2111,70 @@ namespace WeepForTheDeparted.Content.Projectiles
 						var knotNPC = target.GetGlobalNPC<CrimsonKnotGlobalNPC>();
 						int detonated = knotNPC != null ? knotNPC.DetonateKnots(3) : 0;
 						totalKnotsDetonatedInUlt += detonated;
+						if (detonated > 0)
+						{
+							TryTriggerDepartedSiphon(naughtPlayer, target.Center, detonated);
+						}
 
-						// Bladesong of the Endless Rain: Detonated knots spawn infinitely-piercing homing blossom needles
-						var naughtPlayer = Owner.GetModPlayer<NaughtPlayer>();
 						if (naughtPlayer != null && naughtPlayer.HasBladesongRain && detonated > 0)
 						{
+							int needleDamage = naughtPlayer.GetNaughtDamage(0.70f);
+							int needleCrit = naughtPlayer.GetNaughtCritChance();
+							int originRootWhoAmI = BloodBlossomNeedle.GetRootNpcIndex(target);
+							float encodedOrigin = originRootWhoAmI >= 0 ? originRootWhoAmI + 1f : 0f;
+							float baseFanAngle = Main.rand.NextFloat(MathHelper.TwoPi);
+
 							for (int n = 0; n < detonated; n++)
 							{
-								Vector2 needleVel = Main.rand.NextVector2Circular(10f, 10f);
-								Projectile.NewProjectile(Owner.GetSource_FromThis(), target.Center, needleVel, ModContent.ProjectileType<BloodBlossomNeedle>(), (int)(baseDamage * 0.70f), 2f, Owner.whoAmI);
+								BloodBlossomNeedle.EnforceCap(Owner.whoAmI);
+								float fanAngle = baseFanAngle + MathHelper.TwoPi * (n / (float)detonated) + Main.rand.NextFloat(-0.28f, 0.28f);
+								Vector2 needleVel = fanAngle.ToRotationVector2() * Main.rand.NextFloat(12f, 16f);
+								float launchUpdates = Main.rand.Next(30, 42);
+								int nIdx = Projectile.NewProjectile(
+									Owner.GetSource_FromThis(),
+									target.Center,
+									needleVel,
+									ModContent.ProjectileType<BloodBlossomNeedle>(),
+									needleDamage,
+									2f,
+									Owner.whoAmI,
+									ai0: encodedOrigin,
+									ai1: launchUpdates);
+								if (nIdx >= 0 && nIdx < Main.maxProjectiles)
+								{
+									Main.projectile[nIdx].CritChance = needleCrit;
+								}
 							}
 						}
 
-						int strikeDamage = (int)(baseDamage * 1.65f + detonated * baseDamage * 0.55f);
+						// Rainblade 1 & 2 deal 75% base + 100% knot bonus here (paired with 25% preemptive slash); Rainblade 3 deals 100% base + 100% knot bonus
+						bool hasPreSplit = index <= 2;
+						float rainbladeBaseMult = hasPreSplit
+							? ((naughtPlayer != null && naughtPlayer.HasEidolon3) ? 1.275f : 1.2375f)
+							: ((naughtPlayer != null && naughtPlayer.HasEidolon3) ? 1.70f : 1.65f);
+						float rainbladeKnotMult = (naughtPlayer != null && naughtPlayer.HasEidolon3) ? 0.60f : 0.55f;
+						int strikeDamage = (int)(baseDamage * rainbladeBaseMult + detonated * baseDamage * rainbladeKnotMult);
 						if (!target.dontTakeDamage || target.type == NPCID.TargetDummy)
 						{
-							target.SimpleStrikeNPC(strikeDamage, Owner.direction, false, 4f, DamageClass.Melee);
+							if (naughtPlayer != null)
+							{
+								naughtPlayer.StrikeNPC(
+									target,
+									strikeDamage,
+									LockedFacingDir,
+									crit: null,
+									knockBack: 4f,
+									sourceProj: Projectile,
+									isUltimate: true);
+							}
+							else
+							{
+								target.SimpleStrikeNPC(strikeDamage, LockedFacingDir, false, 4f, WeepCompatibility.TrueMelee);
+							}
 						}
 
-						// Splitting Dismemberment along cut angle (with multi-segment group propagation)!
 						NihilityDismember.TriggerGroup(target, target.Center, angle, duration: 240, holdFrames: 14);
 
-						// Crimson bloom burst
 						for (int d = 0; d < 12 + detonated * 6; d++)
 						{
 							int dustType = detonated > 0 ? DustID.CrimsonTorch : DustID.Shadowflame;
@@ -786,19 +2188,11 @@ namespace WeepForTheDeparted.Content.Projectiles
 				}
 			}
 
-			// Rift of the Void Horizon: Rainblades leave lingering spatial fissures
-			var np = Owner.GetModPlayer<NaughtPlayer>();
-			if (np != null && np.HasVoidHorizon)
-			{
-				int fIdx = Projectile.NewProjectile(Owner.GetSource_FromThis(), (slashStart + slashEnd) * 0.5f, Vector2.Zero, ModContent.ProjectileType<VoidFissure>(), (int)(baseDamage * 0.85f), 1f, Owner.whoAmI);
-				if (fIdx >= 0 && fIdx < Main.maxProjectiles && Main.projectile[fIdx].ModProjectile is VoidFissure vf)
-				{
-					vf.Init(slashStart, slashEnd);
-				}
-			}
-
 			if (enemiesHit == 0)
 			{
+				Vector2 dir = angle.ToRotationVector2();
+				Vector2 slashStart = cutCenter - dir * (Main.screenWidth * 0.65f);
+				Vector2 slashEnd = cutCenter + dir * (Main.screenWidth * 0.65f);
 				for (int d = 0; d < 20; d++)
 				{
 					Vector2 pos = Vector2.Lerp(slashStart, slashEnd, Main.rand.NextFloat());
@@ -810,44 +2204,42 @@ namespace WeepForTheDeparted.Content.Projectiles
 
 		private void ExecuteStygianResurge(float resurgeAngle, float tilt)
 		{
-			// 1. Acheron Ultimate Resurge Sound: Blinding spatial shatter + devastating sub-bass explosion
 			SoundEngine.PlaySound(WeepSound.AcheronResurge, Owner.Center);
 			SoundEngine.PlaySound(SoundID.Item14 with { Pitch = -0.50f, Volume = 1.0f }, Owner.Center);
 
-			// 2. Colossal Camera Punch & Spacetime Inversion
-			Main.instance.CameraModifiers.Add(new PunchCameraModifier(Owner.Center, new Vector2(-1f, -0.6f).SafeNormalize(Vector2.UnitX), 36f, 12f, 34, 2400f, "StygianResurge"));
+			var naughtPlayer = Owner.GetModPlayer<NaughtPlayer>();
+			if (naughtPlayer != null && Owner.whoAmI == Main.myPlayer && !Main.dedServ)
+			{
+				naughtPlayer.AddUltCameraRecoil(new Vector2(-24f, -4f));
+				naughtPlayer.PunchUltCameraZoom(-0.56f, -0.014f);
+			}
+
 			NihilityDomainSystem.NegativeFlash = 1.0f;
 			NihilityDomainSystem.AnomalyPulse = 1.0f;
-
-			// 3. Ultimate Hitstop Freeze (5 frames of dramatic cinematic impact)
 			hitstopFrames = 5;
 
-			// 4. Spawn Grand Battou Slash Arc at impact!
-			activeArcs.Add(new ActiveSlashArc
+			NPC primaryTarget = FindPrimaryTarget();
+			Vector2 lockedCenter = naughtPlayer != null && naughtPlayer.UltCameraLocked
+				? naughtPlayer.UltLockedScreenPos + new Vector2(Main.screenWidth * 0.5f, Main.screenHeight * 0.5f)
+				: Main.screenPosition + new Vector2(Main.screenWidth * 0.5f, Main.screenHeight * 0.5f);
+			Vector2 cleaveCenter = primaryTarget != null ? primaryTarget.Center : lockedCenter;
+
+			// Monumental screen-splitting horizontal cleave seam held until sheathing snap
+			ActiveSeams.Add(new UltCleaveSeam3D
 			{
-				Center = Owner.MountedCenter + resurgeAngle.ToRotationVector2() * 85f,
-				Rotation = resurgeAngle,
-				Radius = 400f,
-				ArcSpan = MathHelper.ToRadians(215f),
-				Type = 3,
-				Timer = 0,
-				MaxTime = 32,
-				Flip = Owner.direction,
-				TiltX = tilt
+				WorldCenter = cleaveCenter,
+				Angle = resurgeAngle,
+				HalfLength = Main.screenWidth * 0.95f,
+				HalfWidth = 52f,
+				Seed = 0.91f,
+				Age = 0,
+				MaxAge = 240,
+				PersistUntilSnap = true
 			});
 
-			NPC primaryTarget = FindPrimaryTarget();
-			Vector2 cleaveCenter = primaryTarget != null ? primaryTarget.Center : (Main.screenPosition + new Vector2(Main.screenWidth * 0.5f, Main.screenHeight * 0.5f));
-			Vector2 cleaveDir = resurgeAngle.ToRotationVector2();
-			Vector2 cleaveStart = cleaveCenter - cleaveDir * (Main.screenWidth * 1.05f);
-			Vector2 cleaveEnd = cleaveCenter + cleaveDir * (Main.screenWidth * 1.05f);
-			activeSlashes.Add(new SlashRecord(cleaveStart, cleaveEnd, Timer, new Color(255, 255, 255)));
-
-			// Grand bloom and explosion on Stygian Resurge!
 			SpawnImpactVisuals(cleaveCenter, true);
 
-			int baseDamage = Projectile.damage;
-			int totalKnotsPurged = 0;
+			int baseDamage = Projectile.damage > 0 ? Projectile.damage : (naughtPlayer?.GetNaughtDamage() ?? 25);
 
 			for (int i = 0; i < Main.maxNPCs; i++)
 			{
@@ -864,10 +2256,15 @@ namespace WeepForTheDeparted.Content.Projectiles
 							knotNPC.ClearCrimsonKnot();
 						}
 
-						totalKnotsPurged += remainingKnots;
 						totalKnotsDetonatedInUlt += remainingKnots;
+						if (remainingKnots > 0)
+						{
+							TryTriggerDepartedSiphon(naughtPlayer, target.Center, remainingKnots);
+						}
 
-						int resurgeDamage = (int)(baseDamage * 4.8f + remainingKnots * baseDamage * 0.35f);
+						float resurgeBaseMult = (naughtPlayer != null && naughtPlayer.HasEidolon5) ? 6.30f : ResurgeDamageMultiplier;
+						float resurgeKnotMult = (naughtPlayer != null && naughtPlayer.HasEidolon5) ? 0.40f : 0.35f;
+						int resurgeDamage = (int)(baseDamage * resurgeBaseMult + remainingKnots * baseDamage * resurgeKnotMult);
 
 						pendingResurgeHits.Add(new PendingResurgeHit
 						{
@@ -876,7 +2273,6 @@ namespace WeepForTheDeparted.Content.Projectiles
 							DetonatedKnots = remainingKnots
 						});
 
-						// Instant violent dismemberment with group propagation across multi-segment bosses!
 						NihilityDismember.TriggerGroup(target, target.Center, resurgeAngle, duration: 280, holdFrames: 2);
 
 						for (int d = 0; d < 25; d++)
@@ -889,8 +2285,6 @@ namespace WeepForTheDeparted.Content.Projectiles
 				}
 			}
 
-			// Resource Reset & Overflow Charge Refund
-			var naughtPlayer = Owner.GetModPlayer<NaughtPlayer>();
 			if (naughtPlayer != null)
 			{
 				int refundedCharges = naughtPlayer.OverflowDream;
@@ -902,569 +2296,214 @@ namespace WeepForTheDeparted.Content.Projectiles
 					SoundEngine.PlaySound(SoundID.Item4 with { Pitch = 0.35f, Volume = 0.85f }, Owner.Center);
 				}
 
-				// Siphon of the Departed: Heal 1% max HP per knot detonated (up to 9%) and +15% move speed for 8s
-				if (naughtPlayer.HasDepartedSiphon && totalKnotsDetonatedInUlt > 0)
-				{
-					int healAmount = Math.Min(9, totalKnotsDetonatedInUlt) * (int)(Owner.statLifeMax2 * 0.01f);
-					if (healAmount > 0)
-					{
-						Owner.Heal(healAmount);
-					}
-					naughtPlayer.SiphonMoveSpeedTimer = 480; // 8s
-				}
-
-				// Emancipator's Severed Will: Refund 2 Slashed Dream per 9 knots detonated total, and +20% crit for 10s
 				if (naughtPlayer.HasEmancipatorWill)
 				{
-					int knotRefund = (totalKnotsDetonatedInUlt / 9) * 2;
+					int knotRefund = totalKnotsDetonatedInUlt / 3;
 					if (knotRefund > 0)
 					{
 						naughtPlayer.AddSlashedDream(knotRefund);
+						if (refundedCharges == 0)
+						{
+							SoundEngine.PlaySound(SoundID.Item4 with { Pitch = 0.45f, Volume = 0.85f }, Owner.Center);
+						}
+						if (Owner.whoAmI == Main.myPlayer && !Main.dedServ)
+						{
+							CombatText.NewText(Owner.Hitbox, new Color(255, 195, 75), $"+{knotRefund} Slashed Dream", dramatic: true);
+						}
 					}
-					naughtPlayer.EmancipatorCritBuffTimer = 600; // 10s
+				}
+			}
+		}
+
+		private void TryTriggerDepartedSiphon(NaughtPlayer naughtPlayer, Vector2 sourceCenter, int knotsDetonated)
+		{
+			if (naughtPlayer == null || !naughtPlayer.HasDepartedSiphon || knotsDetonated <= 0)
+				return;
+
+			if (!Main.dedServ)
+			{
+				int trailCount = Math.Clamp(knotsDetonated * 3, 4, 14);
+				Vector2 toOwner = Owner.MountedCenter - sourceCenter;
+				float dist = toOwner.Length();
+				Vector2 dir = dist > 1f ? toOwner / dist : Vector2.Zero;
+				for (int i = 0; i < trailCount; i++)
+				{
+					float t = Main.rand.NextFloat(0.05f, 0.85f);
+					Vector2 pos = Vector2.Lerp(sourceCenter, Owner.MountedCenter, t) + Main.rand.NextVector2Circular(14f, 14f);
+					Vector2 vel = dir * Main.rand.NextFloat(5f, 10f) + Main.rand.NextVector2Circular(1.5f, 1.5f);
+					Color col = i % 3 == 0 ? new Color(255, 95, 130) : new Color(235, 25, 65);
+					PRTLoader.NewParticle<VoidSparkPRT>(pos, vel, col, Main.rand.NextFloat(0.65f, 1.05f));
 				}
 
-				// Thunder Core: Post-Ult +15% True Melee damage for 15s
-				if (naughtPlayer.HasThunderCore)
+				for (int p = 0; p < Math.Min(knotsDetonated + 1, 5); p++)
 				{
-					naughtPlayer.ThunderCoreBuffTimer = 900; // 15s
+					Vector2 pVel = dir * Main.rand.NextFloat(3.5f, 7f) + Main.rand.NextVector2Circular(2f, 2f);
+					PRTLoader.NewParticle<CrimsonPetalPRT>(sourceCenter + Main.rand.NextVector2Circular(16f, 16f), pVel, new Color(245, 35, 75, 230), Main.rand.NextFloat(0.65f, 0.95f));
+				}
+			}
+
+			int cappedKnots = Math.Min(MaxSiphonKnotsPerUlt, totalKnotsDetonatedInUlt);
+			int targetTotalHeal = (int)MathF.Round(Owner.statLifeMax2 * (cappedKnots * SiphonHealPerKnot));
+			int healNow = targetTotalHeal - siphonHealedHpInUlt;
+			if (healNow > 0)
+			{
+				siphonHealedHpInUlt += healNow;
+				Owner.Heal(healNow);
+
+				if (!Main.dedServ)
+				{
+					SoundEngine.PlaySound(SoundID.Item4 with { Pitch = 0.55f, Volume = 0.55f }, Owner.Center);
+					for (int i = 0; i < 6; i++)
+					{
+						Vector2 burstVel = Main.rand.NextVector2Circular(3.2f, 3.2f);
+						PRTLoader.NewParticle<VoidSparkPRT>(Owner.MountedCenter + Main.rand.NextVector2Circular(8f, 12f), burstVel, new Color(255, 110, 145), 0.75f);
+					}
 				}
 			}
 		}
 
 		private void UpdatePlayerStance()
 		{
-			if (Timer < UnsheathDuration)
+			int drawDir = VisualDrawDirection >= 0 ? 1 : -1;
+
+			if (Timer <= UnsheathDuration)
 			{
-				// Low iaijutsu unsheathing posture
 				float progress = MathHelper.Clamp(Timer / (float)UnsheathDuration, 0f, 1f);
 				float eased = VaultUtils.EaseQuadOut(progress);
 
-				// Right arm grasps the handle and follows the forward-up draw
-				float frontArmAngle = MathHelper.Lerp(-Owner.direction * 0.28f, -Owner.direction * 0.58f, eased) * Owner.gravDir;
+				float frontArmAngle = MathHelper.Lerp(-drawDir * 0.28f, -drawDir * 0.58f, eased) * Owner.gravDir;
 				Owner.SetCompositeArmFront(true, Player.CompositeArmStretchAmount.ThreeQuarters, frontArmAngle);
-
-				// Left arm holds the scabbard mouth at the hip
-				float backArmAngle = -Owner.direction * 0.22f * Owner.gravDir;
-				Owner.SetCompositeArmBack(true, Player.CompositeArmStretchAmount.ThreeQuarters, backArmAngle);
-				return;
-			}
-
-			if (isSwinging)
-			{
-				float s = MathHelper.Clamp(swingTimer / (float)swingDuration, 0f, 1f);
-				float eased;
-				if (s < swingImpactProgress)
-				{
-					float u = s / swingImpactProgress;
-					eased = (float)Math.Pow(u, 1.8) * 0.5f;
-				}
-				else
-				{
-					float u = (s - swingImpactProgress) / (1f - swingImpactProgress);
-					eased = 0.5f + (1f - (float)Math.Pow(1f - u, 1.8)) * 0.5f;
-				}
-				float currentRot = MathHelper.Lerp(swingStartAngle, swingEndAngle, eased);
-				float armAngle;
-				if (Owner.direction > 0)
-					armAngle = (currentRot - MathHelper.PiOver2) * Owner.gravDir;
-				else
-					armAngle = (3f * MathHelper.PiOver2 - currentRot) * Owner.gravDir;
-
-				Owner.SetCompositeArmFront(true, Player.CompositeArmStretchAmount.Full, armAngle);
-				Owner.SetCompositeArmBack(true, Player.CompositeArmStretchAmount.Quarter, -Owner.direction * 0.15f * Owner.gravDir);
+				Owner.SetCompositeArmBack(true, Player.CompositeArmStretchAmount.ThreeQuarters, -drawDir * 0.22f * Owner.gravDir);
 				return;
 			}
 
 			if (isSheathing)
 			{
-				float p = MathHelper.Clamp(sheathTimer / (float)(SheathDuration - 16), 0f, 1f);
+				float p = MathHelper.Clamp(sheathTimer / (float)SheathSlideDuration, 0f, 1f);
 				float eased = VaultUtils.EaseQuadOut(p);
 
-				// Right arm guides the handle smoothly backward-down towards the scabbard mouth
-				float frontArmAngle = MathHelper.Lerp(-Owner.direction * 0.58f, -Owner.direction * 0.28f, eased) * Owner.gravDir;
+				float frontArmAngle = MathHelper.Lerp(-drawDir * 0.58f, -drawDir * 0.28f, eased) * Owner.gravDir;
 				Owner.SetCompositeArmFront(true, Player.CompositeArmStretchAmount.ThreeQuarters, frontArmAngle);
-
-				// Left arm holds the scabbard mouth at the hip
-				float backArmAngle = -Owner.direction * 0.22f * Owner.gravDir;
-				Owner.SetCompositeArmBack(true, Player.CompositeArmStretchAmount.ThreeQuarters, backArmAngle);
+				Owner.SetCompositeArmBack(true, Player.CompositeArmStretchAmount.ThreeQuarters, -drawDir * 0.22f * Owner.gravDir);
 				return;
 			}
 
-			// Resting / waiting drawing stance
-			float restAngle = -Owner.direction * 0.35f * Owner.gravDir;
-			if (SlashStage == 3)
-			{
-				// Zanshin: slowly sliding back towards sheath
-				restAngle = -Owner.direction * 0.20f * Owner.gravDir;
-			}
-			else if (SlashStage >= 4)
-			{
-				// Snapped into sheath
-				restAngle = -Owner.direction * 0.28f * Owner.gravDir;
-			}
+			// Compute composite arm rotation dynamically from the projected 2D hilt->tip blade angle!
+			Vector2 hilt2D = Ult3DProjection.Project(Hilt3D, SafeFrameOrigin, LockedFacingDir, out _);
+			Vector2 tip2D = Ult3DProjection.Project(Tip3D, SafeFrameOrigin, LockedFacingDir, out _);
+			float blade2DRot = (tip2D - hilt2D).ToRotation();
 
-			Owner.SetCompositeArmFront(true, Player.CompositeArmStretchAmount.ThreeQuarters, restAngle);
-			Owner.SetCompositeArmBack(true, Player.CompositeArmStretchAmount.ThreeQuarters, -Owner.direction * 0.22f * Owner.gravDir);
+			float armAngle;
+			if (drawDir > 0)
+				armAngle = (blade2DRot - MathHelper.PiOver2) * Owner.gravDir;
+			else
+				armAngle = (3f * MathHelper.PiOver2 - blade2DRot) * Owner.gravDir;
+
+			Owner.SetCompositeArmFront(true, isSwinging ? Player.CompositeArmStretchAmount.Full : Player.CompositeArmStretchAmount.ThreeQuarters, armAngle);
+			Owner.SetCompositeArmBack(true, Player.CompositeArmStretchAmount.Quarter, -drawDir * 0.20f * Owner.gravDir);
 		}
 
 		public override bool PreDraw(ref Color lightColor)
 		{
-			// 1. Draw 3D Crescent Slash Arcs with OniCrimsonSlash Shader!
-			DrawSlashArcs();
-
-			// 2. Draw hanging screen slashes & dimensional scars
-			Texture2D pixelTex = TextureAssets.MagicPixel.Value;
-			if (pixelTex != null)
-			{
-				for (int i = activeSlashes.Count - 1; i >= 0; i--)
-				{
-					SlashRecord slash = activeSlashes[i];
-					float age = Timer - slash.SpawnFrame;
-					float maxAge = 50f;
-					if (age > maxAge)
-						continue;
-
-					float slashAlpha = MathHelper.Clamp(1f - (age / maxAge), 0f, 1f);
-					float thickness = (SlashStage >= 4 && slash.SpawnFrame == Timer - postResurgeTimer)
-						? MathHelper.Lerp(14f, 2f, age / maxAge)
-						: MathHelper.Lerp(6f, 1f, age / maxAge);
-
-					Vector2 diff = slash.End - slash.Start;
-					float length = diff.Length();
-					float rot = diff.ToRotation();
-					Vector2 drawStart = slash.Start - Main.screenPosition;
-
-					Main.spriteBatch.Draw(pixelTex, drawStart, new Rectangle(0, 0, (int)length, (int)(thickness * 2.5f)), slash.Col * (slashAlpha * 0.5f), rot, new Vector2(0f, thickness * 1.25f), 1f, SpriteEffects.None, 0f);
-					Main.spriteBatch.Draw(pixelTex, drawStart, new Rectangle(0, 0, (int)length, (int)thickness), Color.White * (slashAlpha * 0.95f), rot, new Vector2(0f, thickness * 0.5f), 1f, SpriteEffects.None, 0f);
-				}
-			}
-
-			// 3. Draw Weapon (Authentic Iaido Unsheathing vs 3D Warped Swinging vs Stance)
-			DrawWeaponSprites();
-
+			// 3D Ultimate visuals are rendered in Ult3DRenderHandle (DrawBeforePlayers / DrawAfterPlayers)
+			// bracketing Terraria's native player pass with NaughtPlayer.TransformDrawData.
 			return false;
-		}
-
-		private void DrawSlashArcs()
-		{
-			Effect fx = ShaderLoader.SlashShader;
-			Texture2D brush = null;
-			Texture2D noise = null;
-
-			try
-			{
-				brush = ModContent.Request<Texture2D>("WeepForTheDeparted/Content/Projectiles/SlashBrush01", AssetRequestMode.ImmediateLoad).Value;
-				noise = ModContent.Request<Texture2D>("WeepForTheDeparted/Content/Projectiles/RiftNoise", AssetRequestMode.ImmediateLoad).Value;
-			}
-			catch { }
-
-			if (fx == null || brush == null || noise == null || activeArcs.Count == 0)
-				return;
-
-			GraphicsDevice device = Main.graphics.GraphicsDevice;
-			SpriteBatch sb = Main.spriteBatch;
-
-			var sbState = sb.Capture();
-			sb.End();
-
-			BlendState origBlend = device.BlendState;
-			RasterizerState origRaster = device.RasterizerState;
-			device.BlendState = BlendState.AlphaBlend;
-			device.RasterizerState = RasterizerState.CullNone;
-
-			Matrix projection = Matrix.CreateOrthographicOffCenter(0, Main.screenWidth, Main.screenHeight, 0, -4000f, 4000f);
-			Matrix view = Matrix.CreateTranslation(new Vector3(-Main.screenPosition.X, -Main.screenPosition.Y, 0)) * Main.GameViewMatrix.TransformationMatrix;
-			Matrix transformMatrix = view * projection;
-
-			fx.Parameters["transformMatrix"]?.SetValue(transformMatrix);
-			fx.Parameters["uTime"]?.SetValue(Main.GlobalTimeWrappedHourly);
-			fx.Parameters["uBrushTex"]?.SetValue(brush);
-			fx.Parameters["uNoiseTex"]?.SetValue(noise);
-			fx.Parameters["uFarSel"]?.SetValue(0f);
-			fx.Parameters["uRazorTailWiden"]?.SetValue(0.40f);
-			fx.Parameters["uInk"]?.SetValue(0f);
-
-			// Crimson Acheron palette: white-hot razor line, blazing crimson energy, dark wine edge
-			fx.Parameters["uColHot"]?.SetValue(new Vector3(1.0f, 0.94f, 0.96f));
-			fx.Parameters["uColBright"]?.SetValue(new Vector3(1.0f, 0.12f, 0.25f));
-			fx.Parameters["uColDeep"]?.SetValue(new Vector3(0.70f, 0.04f, 0.14f));
-			fx.Parameters["uColDark"]?.SetValue(new Vector3(0.20f, 0.01f, 0.04f));
-
-			foreach (var arc in activeArcs)
-			{
-				float progress = arc.Timer / (float)arc.MaxTime;
-				float sweep = Math.Min(1f, progress * 2.2f);
-				float erode = Math.Max(0f, (progress - 0.35f) * 1.55f);
-				float flash = MathHelper.Clamp((float)Math.Sin(progress * MathHelper.Pi) * 0.95f, 0f, 1f);
-				float alpha = 1f - progress * progress;
-
-				fx.Parameters["uMode"]?.SetValue(0f); // Polar crescent arc
-				fx.Parameters["uSweep"]?.SetValue(sweep);
-				fx.Parameters["uErode"]?.SetValue(erode);
-				fx.Parameters["uTailErode"]?.SetValue(progress * 0.7f);
-				fx.Parameters["uFlash"]?.SetValue(flash);
-				fx.Parameters["uOpacity"]?.SetValue(alpha);
-				fx.Parameters["uArcSpan"]?.SetValue(arc.ArcSpan);
-				fx.Parameters["uThick"]?.SetValue(arc.Type == 3 ? 0.44f : 0.32f);
-				fx.Parameters["uFlip"]?.SetValue(arc.Flip);
-
-				// 3D Perspective Tilt Shading (dim far side for depth)
-				float tiltAbs = Math.Abs(arc.TiltX);
-				fx.Parameters["uFarDim"]?.SetValue(MathHelper.Clamp(tiltAbs * 0.75f, 0f, 0.55f));
-				fx.Parameters["uFarDirLocal"]?.SetValue(new Vector2(0f, -1f));
-
-				Vector2 dir = arc.Rotation.ToRotationVector2();
-				Vector2 normal = new Vector2(-dir.Y, dir.X);
-
-				// Calculate 3D perspective foreshortening & trapezoid keystone distortion:
-				float cosTilt = (float)Math.Cos(arc.TiltX);
-				float sinTilt = (float)Math.Sin(arc.TiltX);
-				float persp = 0.44f;
-
-				// Near edge expands in perspective, far edge contracts in perspective
-				float nearScale = 1.0f + Math.Abs(sinTilt) * persp;
-				float farScale = Math.Max(0.25f, 1.0f - Math.Abs(sinTilt) * persp);
-
-				float hx = arc.Radius * 1.15f;
-				float hy = arc.Radius * 1.15f * Math.Max(0.35f, cosTilt);
-				Vector2 center = arc.Center + dir * (arc.Radius * 0.15f);
-
-				// Vertices with 3D perspective keystone trapezoid:
-				// v0: far-left (-dir * farScale, -normal * hy)
-				// v1: far-right (+dir * farScale, -normal * hy)
-				// v2: near-left (-dir * nearScale, +normal * hy)
-				// v3: near-right (+dir * nearScale, +normal * hy)
-				VertexPositionColorTexture[] verts = new VertexPositionColorTexture[4];
-				verts[0] = new VertexPositionColorTexture(new Vector3(center - dir * (hx * farScale) - normal * hy, 0f), Color.White, new Vector2(0f, 0f));
-				verts[1] = new VertexPositionColorTexture(new Vector3(center + dir * (hx * farScale) - normal * hy, 0f), Color.White, new Vector2(1f, 0f));
-				verts[2] = new VertexPositionColorTexture(new Vector3(center - dir * (hx * nearScale) + normal * hy, 0f), Color.White, new Vector2(0f, 1f));
-				verts[3] = new VertexPositionColorTexture(new Vector3(center + dir * (hx * nearScale) + normal * hy, 0f), Color.White, new Vector2(1f, 1f));
-
-				foreach (EffectPass pass in fx.CurrentTechnique.Passes)
-				{
-					pass.Apply();
-					device.DrawUserPrimitives(PrimitiveType.TriangleStrip, verts, 0, 2);
-				}
-			}
-
-			device.BlendState = origBlend;
-			device.RasterizerState = origRaster;
-
-			sb.Begin(in sbState);
-		}
-
-		private void DrawScabbardFlash(Vector2 flashPos, float flashAlpha, float bladeAxisAngle)
-		{
-			if (flashAlpha <= 0.002f)
-				return;
-
-			var sbState = Main.spriteBatch.Capture();
-			Main.spriteBatch.End();
-
-			Main.spriteBatch.Begin(SpriteSortMode.Deferred, BlendState.Additive, SamplerState.LinearClamp, DepthStencilState.None, RasterizerState.CullNone, null, sbState.Matrix);
-
-			Texture2D flareTex = TextureAssets.Extra[ExtrasID.SharpTears]?.Value;
-			Texture2D glowTex = TextureAssets.Extra[ExtrasID.ThePerfectGlow]?.Value;
-
-			if (glowTex != null)
-			{
-				Vector2 glowOrigin = glowTex.Size() * 0.5f;
-				// Outer vivid crimson / purple bloom aura
-				Color auraColor = new Color(255, 30, 60, 0) * (0.85f * flashAlpha);
-				Main.spriteBatch.Draw(glowTex, flashPos, null, auraColor, 0f, glowOrigin, 0.55f * flashAlpha, SpriteEffects.None, 0f);
-
-				// Inner brilliant white-hot core
-				Color coreColor = new Color(255, 240, 245, 0) * (1.0f * flashAlpha);
-				Main.spriteBatch.Draw(glowTex, flashPos, null, coreColor, 0f, glowOrigin, 0.25f * flashAlpha, SpriteEffects.None, 0f);
-			}
-
-			if (flareTex != null)
-			{
-				Vector2 flareOrigin = flareTex.Size() * 0.5f;
-				// 1. Blinding anamorphic ray along the katana blade axis
-				Color rayColor = Color.White * flashAlpha;
-				Main.spriteBatch.Draw(flareTex, flashPos, null, rayColor, bladeAxisAngle, flareOrigin, new Vector2(1.85f, 0.35f) * flashAlpha, SpriteEffects.None, 0f);
-
-				// 2. Perpendicular diffraction cross ray in electric crimson
-				Color perpColor = new Color(255, 60, 95, 0) * (0.85f * flashAlpha);
-				Main.spriteBatch.Draw(flareTex, flashPos, null, perpColor, bladeAxisAngle + MathHelper.PiOver2, flareOrigin, new Vector2(0.95f, 0.25f) * flashAlpha, SpriteEffects.None, 0f);
-
-				// 3. 45-degree star diffraction diamond in pure silver-white
-				Color diagColor = Color.White * (0.65f * flashAlpha);
-				Main.spriteBatch.Draw(flareTex, flashPos, null, diagColor, bladeAxisAngle + MathHelper.PiOver4, flareOrigin, new Vector2(0.65f, 0.20f) * flashAlpha, SpriteEffects.None, 0f);
-			}
-
-			Main.spriteBatch.End();
-			Main.spriteBatch.Restart(in sbState);
-		}
-
-		private void DrawWeaponSprites()
-		{
-			Texture2D bladeTex = ModContent.Request<Texture2D>("WeepForTheDeparted/Content/Items/Weapons/NaughtUltBlade", AssetRequestMode.ImmediateLoad).Value;
-			Texture2D sheathTex = null;
-			Texture2D hiltTex = null;
-
-			try
-			{
-				sheathTex = ModContent.Request<Texture2D>("WeepForTheDeparted/Content/Items/Weapons/NaughtSheathBody", AssetRequestMode.ImmediateLoad).Value;
-			}
-			catch
-			{
-				sheathTex = ModContent.Request<Texture2D>("WeepForTheDeparted/Content/Items/Weapons/NaughtSheath", AssetRequestMode.ImmediateLoad).Value;
-			}
-
-			try
-			{
-				hiltTex = ModContent.Request<Texture2D>("WeepForTheDeparted/Content/Items/Weapons/NaughtUnsheathHilt", AssetRequestMode.ImmediateLoad).Value;
-			}
-			catch
-			{
-				hiltTex = null;
-			}
-
-			if (bladeTex == null || sheathTex == null)
-				return;
-
-			SpriteEffects effects = Owner.direction < 0 ? SpriteEffects.FlipHorizontally : SpriteEffects.None;
-
-			// =========================================================================
-			// PHASE 0: AUTHENTIC IAIDO UNSHEATHING ANIMATION (4 Seconds = 240 Frames)
-			// =========================================================================
-			if (Timer <= UnsheathDuration)
-			{
-				Vector2 handPos = Owner.MountedCenter - Main.screenPosition;
-				Vector2 origin = new Vector2(90f, 90f);
-
-				// Unsheath draw starts on Frame 60 (1.0s in) and finishes on Frame 240 (3.0s draw = 180 frames)
-				float progress = MathHelper.Clamp((Timer - 60f) / 180f, 0f, 1f);
-				float slideProgress = VaultUtils.EaseQuadOut(progress);
-				float slideDist = MathHelper.Lerp(0f, 22f, slideProgress);
-
-				// Base sheath resting angle at hip:
-				// Facing Right: 205 deg (Handle in front pointing forward-up; scabbard pointing back-down)
-				// Facing Left: -205 deg (Handle in front pointing forward-up; scabbard pointing back-down)
-				float baseAngle = MathHelper.ToRadians(205f);
-				float sheathRot = Owner.direction > 0 ? baseAngle : -baseAngle;
-
-				// Forward & upward slide along the sword axis out of the scabbard mouth:
-				Vector2 slideDir = new Vector2(Owner.direction * 0.94f, -0.34f * Owner.gravDir);
-				Vector2 hipOffset = new Vector2(Owner.direction * -6f, 2f * Owner.gravDir);
-				Vector2 sheathPos = handPos + hipOffset;
-
-				// 1. Blade hilt & short exposed blade segment slides FORWARD-UP along sheath opening
-				Vector2 hiltPos = sheathPos + slideDir * slideDist;
-				Texture2D drawHilt = hiltTex ?? bladeTex;
-
-				Color bladeAura = Color.Lerp(new Color(255, 30, 45, 0), new Color(255, 230, 245, 0), slideProgress);
-
-				// Draw hilt sprite FIRST (underneath)
-				Main.spriteBatch.Draw(drawHilt, hiltPos, null, Color.White, sheathRot, origin, 0.95f, effects, 0f);
-				if (slideProgress > 0.05f)
-				{
-					Main.spriteBatch.Draw(drawHilt, hiltPos, null, bladeAura * (0.85f * slideProgress), sheathRot, origin, 1.05f, effects, 0f);
-				}
-
-				// 2. Sheath is drawn SECOND (on top) over the blade!
-				// Scabbard mouth covers whatever blade is still inside, revealing only the emerging steel!
-				Main.spriteBatch.Draw(sheathTex, sheathPos, null, Color.White, sheathRot, origin, 0.95f, effects, 0f);
-
-				// 3. Exact scabbard mouth gleam flash:
-				float mouthX = Owner.direction > 0 ? -16f : 16f;
-				float mouthY = 32f;
-				Vector2 mouthOffset = new Vector2(mouthX, mouthY) * 0.95f;
-				Vector2 unsheathPoint = sheathPos + mouthOffset.RotatedBy(sheathRot);
-				float bladeAxisAngle = slideDir.ToRotation();
-
-				// Initial flash as thumb unlocks tsuba and blade unseals (Timer 35 to 85, peaking at frame 58)
-				if (Timer >= 35 && Timer <= 85)
-				{
-					float t = (Timer - 35f) / 50f;
-					float flashAlpha = t < 0.45f ? (t / 0.45f) : (1f - (t - 0.45f) / 0.55f);
-					DrawScabbardFlash(unsheathPoint, flashAlpha, bladeAxisAngle);
-				}
-
-				// Final sharp gleam as the blade reaches full 100% draw at Frame 240
-				if (Timer >= 220 && Timer <= 240)
-				{
-					float t = (Timer - 220f) / 20f;
-					float flashAlpha = 1f - t;
-					DrawScabbardFlash(unsheathPoint + slideDir * (slideDist * 0.4f), flashAlpha * 0.85f, bladeAxisAngle);
-				}
-
-				return;
-			}
-
-			// Tsuka Grip Origin for NaughtUltBlade (180x180):
-			// Center of handle grip is located at (27, 155).
-			// Under SpriteEffects.FlipHorizontally, texture X mirrors to (180 - 27) = 153.
-			Vector2 gripOrigin = Owner.direction > 0
-				? new Vector2(27f, 155f)
-				: new Vector2(bladeTex.Width - 27f, 155f);
-
-			// =========================================================================
-			// PHASE 1: ACTIVE SWINGING ANIMATION (Firmly pinned to player's front hand!)
-			// =========================================================================
-			if (isSwinging)
-			{
-				float s = MathHelper.Clamp(swingTimer / (float)swingDuration, 0f, 1f);
-				float eased;
-				if (s < swingImpactProgress)
-				{
-					float u = s / swingImpactProgress;
-					eased = (float)Math.Pow(u, 1.8) * 0.5f;
-				}
-				else
-				{
-					float u = (s - swingImpactProgress) / (1f - swingImpactProgress);
-					eased = 0.5f + (1f - (float)Math.Pow(1f - u, 1.8)) * 0.5f;
-				}
-				float currentRot = MathHelper.Lerp(swingStartAngle, swingEndAngle, eased);
-
-				float armAngle;
-				if (Owner.direction > 0)
-					armAngle = (currentRot - MathHelper.PiOver2) * Owner.gravDir;
-				else
-					armAngle = (3f * MathHelper.PiOver2 - currentRot) * Owner.gravDir;
-
-				// Hand position from player's composite arm in screen coordinates:
-				Vector2 handPos = Owner.GetFrontHandPosition(Player.CompositeArmStretchAmount.Full, armAngle) - Main.screenPosition;
-
-				// Dynamic 3D Perspective Warping & Foreshortening (Strictly immune to outside size modifiers)
-				Vector2 scale = new Vector2(1f, 1f);
-				float depthBulge = (float)Math.Sin(s * Math.PI);
-
-				if (swingType == 2)
-				{
-					// Sideways Horizontal Cleave: 3D perspective rotation!
-					// Blade turns from edge-on (ultra-thin height) -> flat broadside facing camera -> edge-on
-					scale.Y = MathHelper.Lerp(0.18f, 1.40f, depthBulge);  // Edge-on to wide broadside
-					scale.X = MathHelper.Lerp(1.30f, 0.85f, depthBulge);  // Foreshortened length
-				}
-				else if (swingType == 1)
-				{
-					// Rising reverse cut: lifts up and toward camera
-					scale.X = 1f + 0.38f * depthBulge;
-					scale.Y = 1f - 0.20f * depthBulge;
-				}
-				else if (swingType == 0)
-				{
-					// Overhead descending cut: sweeps down reaching toward viewer
-					scale.X = 1f + 0.40f * depthBulge;
-					scale.Y = 1f - 0.20f * depthBulge;
-				}
-				else
-				{
-					// Stygian Resurge: massive expanding dimensional slice
-					scale.X = 1f + 0.55f * depthBulge;
-					scale.Y = 1f - 0.25f * depthBulge;
-				}
-
-				float bladeRot = currentRot + (Owner.direction > 0 ? MathHelper.PiOver4 : 3f * MathHelper.PiOver4);
-
-				// Red phantom afterimage trail lagging slightly behind rotation
-				float trailLag = (Owner.direction > 0 ? -0.12f : 0.12f) * (1f - s);
-				float trailRot = bladeRot + trailLag;
-				Color trailColor = new Color(255, 30, 45, 0) * (0.65f * (1f - s));
-				Main.spriteBatch.Draw(bladeTex, handPos, null, trailColor, trailRot, gripOrigin, scale * 1.15f, effects, 0f);
-
-				// Main awakened blade firmly locked in the player's palm
-				Main.spriteBatch.Draw(bladeTex, handPos, null, Color.White, bladeRot, gripOrigin, scale, effects, 0f);
-				return;
-			}
-
-			// =========================================================================
-			// PHASE 3: AUTHENTIC REVERSE SHEATHING ANIMATION AFTER FINAL SLASH (Stygian Resurge)
-			// =========================================================================
-			if (isSheathing)
-			{
-				Vector2 handPos = Owner.MountedCenter - Main.screenPosition;
-				Vector2 origin = new Vector2(90f, 90f);
-
-				float p = MathHelper.Clamp(sheathTimer / (float)(SheathDuration - 16), 0f, 1f);
-				float reverseProgress = 1f - VaultUtils.EaseQuadOut(p);
-				float slideDist = MathHelper.Lerp(0f, 22f, reverseProgress);
-
-				float baseAngle = MathHelper.ToRadians(205f);
-				float sheathRot = Owner.direction > 0 ? baseAngle : -baseAngle;
-
-				Vector2 slideDir = new Vector2(Owner.direction * 0.94f, -0.34f * Owner.gravDir);
-				Vector2 hipOffset = new Vector2(Owner.direction * -6f, 2f * Owner.gravDir);
-				Vector2 sheathPos = handPos + hipOffset;
-
-				// 1. Blade hilt & short exposed blade segment slides BACKWARD-DOWN into the scabbard
-				Vector2 hiltPos = sheathPos + slideDir * slideDist;
-				Texture2D drawHilt = hiltTex ?? bladeTex;
-
-				Color bladeAura = Color.Lerp(new Color(255, 30, 45, 0), new Color(255, 230, 245, 0), reverseProgress);
-
-				// Draw hilt sprite FIRST (underneath)
-				Main.spriteBatch.Draw(drawHilt, hiltPos, null, Color.White, sheathRot, origin, 0.95f, effects, 0f);
-				if (reverseProgress > 0.05f)
-				{
-					Main.spriteBatch.Draw(drawHilt, hiltPos, null, bladeAura * (0.85f * reverseProgress), sheathRot, origin, 1.05f, effects, 0f);
-				}
-
-				// 2. Sheath is drawn SECOND (on top) over the blade
-				Main.spriteBatch.Draw(sheathTex, sheathPos, null, Color.White, sheathRot, origin, 0.95f, effects, 0f);
-
-				// 3. Exact scabbard mouth gleam flash when clicking shut!
-				if (sheathTimer >= SheathDuration - 16 && sheathTimer <= SheathDuration + 4)
-				{
-					float flashAlpha = 1f - MathHelper.Clamp((sheathTimer - (SheathDuration - 16)) / 20f, 0f, 1f);
-					float mouthX = Owner.direction > 0 ? -16f : 16f;
-					float mouthY = 32f;
-					Vector2 mouthOffset = new Vector2(mouthX, mouthY) * 0.95f;
-					Vector2 sheathingPoint = sheathPos + mouthOffset.RotatedBy(sheathRot);
-					float bladeAxisAngle = slideDir.ToRotation();
-
-					DrawScabbardFlash(sheathingPoint, flashAlpha, bladeAxisAngle);
-				}
-				return;
-			}
-
-			// =========================================================================
-			// PHASE 2: IDLE DRAWING / ZANSHIN STANCE (Firmly anchored in hand!)
-			// =========================================================================
-			float restAngle = -Owner.direction * 0.35f * Owner.gravDir;
-			if (SlashStage == 3)
-			{
-				restAngle = -Owner.direction * 0.20f * Owner.gravDir;
-			}
-			else if (SlashStage >= 4)
-			{
-				restAngle = -Owner.direction * 0.28f * Owner.gravDir;
-			}
-
-			Vector2 stanceHandPos = Owner.GetFrontHandPosition(Player.CompositeArmStretchAmount.ThreeQuarters, restAngle) - Main.screenPosition;
-
-			float stanceRot;
-			if (SlashStage < 4)
-			{
-				// Ready stance: blade angled forward-down (~35 deg)
-				float worldAngle = Owner.direction > 0 ? MathHelper.ToRadians(35f) : MathHelper.ToRadians(145f);
-				stanceRot = worldAngle + (Owner.direction > 0 ? MathHelper.PiOver4 : 3f * MathHelper.PiOver4);
-			}
-			else
-			{
-				// Sheathing zanshin stance: blade angled down-back (~140 deg)
-				float worldAngle = Owner.direction > 0 ? MathHelper.ToRadians(140f) : MathHelper.ToRadians(40f);
-				stanceRot = worldAngle + (Owner.direction > 0 ? MathHelper.PiOver4 : 3f * MathHelper.PiOver4);
-			}
-
-			Color auraColor = Color.Lerp(new Color(255, 30, 45, 0), new Color(255, 200, 220, 0), (float)Math.Sin(Timer * 0.2f) * 0.35f + 0.35f);
-			Main.spriteBatch.Draw(bladeTex, stanceHandPos, null, auraColor * 0.85f, stanceRot, gripOrigin, 1.15f, effects, 0f);
-			Main.spriteBatch.Draw(bladeTex, stanceHandPos, null, Color.White, stanceRot, gripOrigin, 1.0f, effects, 0f);
 		}
 
 		public override void OnKill(int timeLeft)
 		{
+			hasPendingPreemptiveStrike = false;
+			hasPendingStrike = false;
+			preemptiveHitDone = false;
+			StopUltMusic();
 			WorldFreezeSystem.Deactivate("SlashedDreamUltimate");
+
+			if (Owner != null && Owner.TryGetModPlayer<NaughtPlayer>(out var np))
+			{
+				bool immediateCam = !Owner.active || Owner.dead || Owner.ghost;
+				np.ResetUltVisualAndCameraState(immediateCamera: immediateCam);
+
+				if (Owner.active && !Owner.dead && sheathDamageDone && np.HasThunderCore)
+				{
+					np.ThunderCoreBuffTimer = 900;
+				}
+			}
+
 			NihilityDomainSystem.TargetMusicSilence = 0f;
 			NihilityDomainSystem.ResetReflectionRipple();
 			NihilityDismember.SnapBackAll();
 			NihilityDismember.ReassembleFactor = 0f;
 			pendingResurgeHits.Clear();
+			Afterimages.Clear();
+			BladeGhosts.Clear();
+			WaterRipples.Clear();
+			ActiveRibbons.Clear();
+			ActiveSeams.Clear();
+			ActiveGleams.Clear();
+
+			if (Owner != null && Owner.active && !Owner.dead && !Owner.ghost && totalKnotsDetonatedInUlt > 0)
+			{
+				var naughtPlayer = Owner.GetModPlayer<NaughtPlayer>();
+				if (naughtPlayer != null && naughtPlayer.HasDepartedSiphon)
+				{
+					naughtPlayer.SiphonMoveSpeedTimer = 480;
+					if (!Main.dedServ && Owner.whoAmI == Main.myPlayer)
+					{
+						SoundEngine.PlaySound(SoundID.Run with { Pitch = 0.35f, Volume = 0.7f }, Owner.Center);
+						for (int i = 0; i < 10; i++)
+						{
+							float ang = MathHelper.TwoPi * i / 10f;
+							Vector2 dir = ang.ToRotationVector2();
+							PRTLoader.NewParticle<VoidSparkPRT>(Owner.MountedCenter + dir * 8f, dir * 3.5f, new Color(255, 80, 120), 0.75f);
+						}
+					}
+				}
+			}
+		}
+
+		private void StartUltMusic()
+		{
+			if (Main.dedServ)
+				return;
+
+			StopUltMusic();
+			ultMusicFade = 1f;
+			ultMusicSlot = Owner.whoAmI == Main.myPlayer
+				? SoundEngine.PlaySound(WeepSound.AcheronUltMusic)
+				: SoundEngine.PlaySound(WeepSound.AcheronUltMusic, Owner.Center);
+		}
+
+		private void UpdateUltMusic()
+		{
+			if (Main.dedServ || !ultMusicSlot.IsValid)
+				return;
+
+			if (!SoundEngine.TryGetActiveSound(ultMusicSlot, out ActiveSound activeSound))
+			{
+				ultMusicSlot = SlotId.Invalid;
+				return;
+			}
+
+			if (isSheathing)
+			{
+				ultMusicFade = Math.Max(0f, ultMusicFade - (1f / UltMusicFadeOutTicks));
+				if (ultMusicFade <= 0f)
+				{
+					activeSound.Stop();
+					ultMusicSlot = SlotId.Invalid;
+					return;
+				}
+				activeSound.Volume = WeepSound.AcheronUltMusic.Volume * ultMusicFade;
+			}
+		}
+
+		private void StopUltMusic()
+		{
+			if (!Main.dedServ && ultMusicSlot.IsValid && SoundEngine.TryGetActiveSound(ultMusicSlot, out ActiveSound activeSound))
+			{
+				activeSound.Stop();
+			}
+			ultMusicSlot = SlotId.Invalid;
 		}
 	}
 }

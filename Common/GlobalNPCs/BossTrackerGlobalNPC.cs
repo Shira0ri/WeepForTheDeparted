@@ -19,6 +19,11 @@ namespace WeepForTheDeparted.Common.GlobalNPCs
 			{
 				BossTrackerSystem.RegisterDefeatedBoss(npc);
 			}
+
+			if (NPC.downedMoonlord && npc.type >= NPCID.Count && (npc.boss || NPCID.Sets.ShouldBeCountedAsBoss[npc.type]))
+			{
+				BossTrackerSystem.MarkPostMoonLordBossDefeated();
+			}
 		}
 	}
 }

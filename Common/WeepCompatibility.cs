@@ -1,6 +1,9 @@
+using System;
+using System.Reflection;
 using Terraria;
 using Terraria.ID;
 using Terraria.ModLoader;
+using WeepForTheDeparted.Common.Configs;
 
 namespace WeepForTheDeparted.Common
 {
@@ -8,6 +11,8 @@ namespace WeepForTheDeparted.Common
 	{
 		private static DamageClass trueMeleeDamageClass;
 		private static DamageClass trueMeleeNoSpeedDamageClass;
+		private static GlobalNPC calamityGlobalNPCTemplate;
+		private static MemberInfo calamityDRMember;
 		private static bool initialized = false;
 
 		private static void EnsureInitialized()
@@ -27,6 +32,14 @@ namespace WeepForTheDeparted.Common
 				if (calamity.TryFind("TrueMeleeNoSpeedDamageClass", out DamageClass trueMeleeNoSpeed))
 				{
 					trueMeleeNoSpeedDamageClass = trueMeleeNoSpeed;
+				}
+
+				if (calamity.TryFind("CalamityGlobalNPC", out GlobalNPC calGlobalNPC))
+				{
+					calamityGlobalNPCTemplate = calGlobalNPC;
+					Type calNPCType = calGlobalNPC.GetType();
+					const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+					calamityDRMember = (MemberInfo)calNPCType.GetField("DR", flags) ?? calNPCType.GetProperty("DR", flags);
 				}
 			}
 		}
@@ -54,6 +67,140 @@ namespace WeepForTheDeparted.Common
 		}
 
 		public static bool HasCalamity => ModLoader.HasMod("CalamityMod");
+
+		/// <summary>
+		/// Safely reads CalamityMod's CalamityGlobalNPC.DR value via cached reflection.
+		/// Returns false if CalamityMod is not loaded or the member is unavailable.
+		/// </summary>
+		public static bool TryGetCalamityNPCDR(NPC npc, out float dr)
+		{
+			dr = 0f;
+			if (npc == null || !npc.active)
+				return false;
+
+			EnsureInitialized();
+			if (calamityGlobalNPCTemplate == null || calamityDRMember == null)
+				return false;
+
+			if (!npc.TryGetGlobalNPC(calamityGlobalNPCTemplate, out GlobalNPC calNPC) || calNPC == null)
+				return false;
+
+			try
+			{
+				object raw = calamityDRMember switch
+				{
+					FieldInfo field => field.GetValue(calNPC),
+					PropertyInfo prop => prop.GetValue(calNPC),
+					_ => null
+				};
+
+				if (raw is float value && float.IsFinite(value))
+				{
+					dr = value;
+					return true;
+				}
+			}
+			catch
+			{
+				// Ignore reflection failures gracefully and allow Vanilla fallback
+			}
+
+			return false;
+		}
+
+		public static float GetCalamityNPCDR(NPC npc) => TryGetCalamityNPCDR(npc, out float dr) ? dr : 0f;
+
+		/// <summary>
+		/// Computes the final-damage multiplier for a single-pass DR peel of <paramref name="totalPeel"/>.
+		/// Skips DR peel if Calamity DR &gt; 0.90f (anti-cheese phase shields), peels up to <paramref name="totalPeel"/>
+		/// off positive Calamity DR, and converts any unspent remainder into multiplicative bonus damage.
+		/// </summary>
+		public static float ComputeUnifiedDRPeelMultiplier(NPC target, float totalPeel)
+		{
+			if (target == null || !target.active || totalPeel <= 0f)
+				return 1f;
+
+			if (TryGetCalamityNPCDR(target, out float dr) && dr > 0f)
+			{
+				if (dr > 0.90f)
+					return 1f;
+
+				float peeled = Math.Min(dr, totalPeel);
+				float newDr = dr - peeled;
+				float remainder = totalPeel - peeled;
+				return ((1f - newDr) / (1f - dr)) * (1f + remainder);
+			}
+
+			return 1f + totalPeel;
+		}
+
+		/// <summary>
+		/// Applies unified single-pass DR peel onto <paramref name="modifiers"/>.
+		/// </summary>
+		public static void ApplyUnifiedDRPeel(NPC target, ref NPC.HitModifiers modifiers, float totalPeel)
+		{
+			if (totalPeel <= 0f)
+				return;
+
+			float mult = ComputeUnifiedDRPeelMultiplier(target, totalPeel);
+			if (mult != 1f)
+			{
+				modifiers.FinalDamage *= mult;
+			}
+		}
+
+		/// <summary>
+		/// Resolves whether Calamity-tuned scaling should be used based on WeepConfig.BalanceMode
+		/// (Auto detects CalamityMod; Calamity and Vanilla force their respective branches).
+		/// </summary>
+		public static bool IsCalamityBalanceActive
+		{
+			get
+			{
+				WeepBalanceMode mode = WeepConfig.Instance?.BalanceMode ?? WeepBalanceMode.Auto;
+				return mode switch
+				{
+					WeepBalanceMode.Calamity => true,
+					WeepBalanceMode.Vanilla => false,
+					_ => HasCalamity
+				};
+			}
+		}
+
+		/// <summary>
+		/// Returns true if the given DamageClass belongs to Naught's Melee / True Melee family.
+		/// </summary>
+		public static bool IsNaughtDamageClass(DamageClass damageType)
+		{
+			return damageType != null && (
+				damageType == TrueMelee ||
+				damageType == TrueMeleeNoSpeed ||
+				damageType == DamageClass.Melee ||
+				damageType == DamageClass.MeleeNoSpeed);
+		}
+
+		/// <summary>
+		/// Returns true if the given DamageClass counts as True Melee
+		/// (Calamity's TrueMeleeDamageClass / TrueMeleeNoSpeedDamageClass when loaded,
+		/// or Vanilla Melee / MeleeNoSpeed when Calamity is absent).
+		/// </summary>
+		public static bool IsTrueMeleeDamageClass(DamageClass damageType)
+		{
+			if (damageType == null)
+				return false;
+
+			EnsureInitialized();
+			if (trueMeleeDamageClass != null)
+			{
+				return damageType == trueMeleeDamageClass
+					|| (trueMeleeNoSpeedDamageClass != null && damageType == trueMeleeNoSpeedDamageClass)
+					|| damageType.CountsAsClass(trueMeleeDamageClass);
+			}
+
+			return damageType == DamageClass.Melee
+				|| damageType == DamageClass.MeleeNoSpeed
+				|| damageType.CountsAsClass(DamageClass.Melee);
+		}
 
 		public static void ApplyDebugDebuffs(NPC target)
 		{

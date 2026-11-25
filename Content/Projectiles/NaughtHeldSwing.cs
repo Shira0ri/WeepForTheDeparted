@@ -38,14 +38,16 @@ namespace WeepForTheDeparted.Content.Projectiles
 
 		private float startAngle = 0f;
 		private float endAngle = 0f;
+		private float beatAimAngle = 0f;
 		private float currentRotation = 0f;
 		private float lastRotation = 0f;
 
 		private bool visualSpawned = false;
+		private bool exWaveSpawned = false;
 		private bool sweepDamageActive = false;
 		private bool soundPlayed = false;
 
-		private readonly HashSet<int> hitNPCs = new HashSet<int>();
+		private HashSet<int> hitNPCs = new HashSet<int>();
 
 		// 4-Beat Odachi Sequence:
 		// 0: Horizontal Draw Cut
@@ -178,6 +180,13 @@ namespace WeepForTheDeparted.Content.Projectiles
 					}
 				}
 
+				// EX (Horizon's Severance): Launch projected crescent wave at slash apex sharing this beat's hit set
+				if (!exWaveSpawned && easeT >= 0.45f)
+				{
+					exWaveSpawned = true;
+					SpawnExWave();
+				}
+
 				if (!soundPlayed)
 				{
 					soundPlayed = true;
@@ -216,8 +225,9 @@ namespace WeepForTheDeparted.Content.Projectiles
 					ComboStep = (ComboStep + 1) % 4;
 					timer = 0f;
 					visualSpawned = false;
+					exWaveSpawned = false;
 					soundPlayed = false;
-					hitNPCs.Clear();
+					hitNPCs = new HashSet<int>();
 
 					for (int i = 0; i < Projectile.localNPCImmunity.Length; i++)
 					{
@@ -233,6 +243,9 @@ namespace WeepForTheDeparted.Content.Projectiles
 
 		private void InitComboBeat()
 		{
+			hitNPCs = new HashSet<int>();
+			exWaveSpawned = false;
+
 			// Face cursor when starting a swing using InnoVault .To() extension
 			Vector2 aim = Owner.MountedCenter.To(Main.MouseWorld);
 			if (aim == Vector2.Zero)
@@ -250,17 +263,26 @@ namespace WeepForTheDeparted.Content.Projectiles
 			swingDirection = dirSign * lockedDirection;
 
 			speedMult = Math.Max(0.7f, Owner.GetTotalAttackSpeed(DamageClass.Melee));
-			float reach = BladeReach;
+			var naughtPlayer = Owner.GetModPlayer<NaughtPlayer>();
+			float reachMult = naughtPlayer?.GetOdachiReachMultiplier() ?? 1f;
+			float reach = BladeReach * reachMult;
 			OnBeatStart(ComboStep, ref speedMult, ref reach);
 
 			float baseAngle = aim.ToRotation();
+			beatAimAngle = baseAngle;
 			startAngle = baseAngle - swingDirection * SwingArc * 0.5f;
 			endAngle = baseAngle + swingDirection * SwingArc * 0.5f;
 
 			currentRotation = lastRotation = startAngle;
-			Projectile.scale = IsFinisher ? 1.30f : 1.10f;
+			Projectile.scale = (IsFinisher ? 1.30f : 1.10f) * reachMult;
 
-			Projectile.damage = (int)(Owner.GetWeaponDamage(Owner.HeldItem) * (IsFinisher ? 1.40f : 1.0f));
+			Projectile.damage = naughtPlayer != null
+				? naughtPlayer.GetNaughtDamage(IsFinisher ? 1.40f : 1.0f)
+				: (int)(Owner.GetWeaponDamage(Owner.HeldItem) * (IsFinisher ? 1.40f : 1.0f));
+			if (naughtPlayer != null)
+			{
+				Projectile.CritChance = naughtPlayer.GetNaughtCritChance();
+			}
 
 			// Windup air breath
 			if (ComboStep == 0)
@@ -289,7 +311,7 @@ namespace WeepForTheDeparted.Content.Projectiles
 			Vector3 deep = new Vector3(0.42f, 0.02f, 0.65f);
 			Vector3 dark = new Vector3(0.08f, 0.01f, 0.14f);
 
-			NaughtSlashVisual.SpawnSlashArc(
+			var slash = NaughtSlashVisual.SpawnSlashArc(
 				Projectile.GetSource_FromThis(),
 				Owner.MountedCenter,
 				aimAngle,
@@ -303,6 +325,46 @@ namespace WeepForTheDeparted.Content.Projectiles
 				Projectile.whoAmI,
 				Owner.whoAmI
 			);
+
+			if (slash != null)
+			{
+				slash.Projectile.CritChance = Projectile.CritChance;
+			}
+		}
+
+		private void SpawnExWave()
+		{
+			if (Main.myPlayer != Projectile.owner)
+				return;
+
+			var naughtPlayer = Owner.GetModPlayer<NaughtPlayer>();
+			if (naughtPlayer == null || !naughtPlayer.HasEidolonEx)
+				return;
+
+			Vector2 aimDir = beatAimAngle.ToRotationVector2();
+			Vector2 spawnPos = Owner.MountedCenter + aimDir * 32f;
+			Vector2 waveVel = aimDir * NaughtExWave.InitialSpeed;
+			int waveDamage = naughtPlayer.GetNaughtDamage(0.45f);
+
+			Projectile waveProj = Projectile.NewProjectileDirect(
+				Projectile.GetSource_FromThis(),
+				spawnPos,
+				waveVel,
+				ModContent.ProjectileType<NaughtExWave>(),
+				waveDamage,
+				Projectile.knockBack * 0.65f,
+				Owner.whoAmI,
+				ai0: ComboStep,
+				ai1: swingDirection);
+
+			if (waveProj != null && waveProj.active)
+			{
+				waveProj.CritChance = naughtPlayer.GetNaughtCritChance();
+				if (waveProj.ModProjectile is NaughtExWave exWave)
+				{
+					exWave.SharedBeatHits = hitNPCs;
+				}
+			}
 		}
 
 		private void PlayMelodicSlashSound()

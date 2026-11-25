@@ -40,6 +40,26 @@ namespace WeepForTheDeparted.Content.Shaders
 		private static Effect crimsonKnotShader;
 		private static bool attemptedCrimsonKnotLoad = false;
 
+		private static Effect bloodLotusShader;
+		private static bool attemptedBloodLotusLoad = false;
+
+		private static Effect bloodBlossomNeedleShader;
+		private static bool attemptedBloodBlossomNeedleLoad = false;
+
+		private static Effect voidHorizonShader;
+		private static bool attemptedVoidHorizonLoad = false;
+
+		private static Effect syncCrossSlashShader;
+		private static bool attemptedSyncCrossSlashLoad = false;
+
+		private static Effect thunderCoreShader;
+		private static bool attemptedThunderCoreLoad = false;
+
+		private static Effect witheredRiverShader;
+		private static bool attemptedWitheredRiverLoad = false;
+		private static Effect ultQuadShader;
+		private static bool attemptedUltQuadLoad = false;
+
 		private static Effect LoadShader(string relativeFxcPath)
 		{
 			if (Main.dedServ)
@@ -200,6 +220,97 @@ namespace WeepForTheDeparted.Content.Shaders
 					crimsonKnotShader = LoadShader("WeepForTheDeparted/Content/Shaders/CrimsonKnot.fxc");
 				}
 				return crimsonKnotShader;
+			}
+		}
+
+		public static Effect BloodLotusShader
+		{
+			get
+			{
+				if (!attemptedBloodLotusLoad && !Main.dedServ)
+				{
+					attemptedBloodLotusLoad = true;
+					bloodLotusShader = LoadShader("WeepForTheDeparted/Content/Shaders/BloodLotusShockwave.fxc");
+				}
+				return bloodLotusShader;
+			}
+		}
+
+		public static Effect BloodBlossomNeedleShader
+		{
+			get
+			{
+				if (!attemptedBloodBlossomNeedleLoad && !Main.dedServ)
+				{
+					attemptedBloodBlossomNeedleLoad = true;
+					bloodBlossomNeedleShader = LoadShader("WeepForTheDeparted/Content/Shaders/BloodBlossomNeedle.fxc");
+				}
+				return bloodBlossomNeedleShader;
+			}
+		}
+
+		public static Effect VoidHorizonShader
+		{
+			get
+			{
+				if (!attemptedVoidHorizonLoad && !Main.dedServ)
+				{
+					attemptedVoidHorizonLoad = true;
+					voidHorizonShader = LoadShader("WeepForTheDeparted/Content/Shaders/VoidHorizonPortal.fxc");
+				}
+				return voidHorizonShader;
+			}
+		}
+
+		public static Effect SyncCrossSlashShader
+		{
+			get
+			{
+				if (!attemptedSyncCrossSlashLoad && !Main.dedServ)
+				{
+					attemptedSyncCrossSlashLoad = true;
+					syncCrossSlashShader = LoadShader("WeepForTheDeparted/Content/Shaders/OniSyncCrossSlash.fxc");
+				}
+				return syncCrossSlashShader;
+			}
+		}
+
+		public static Effect ThunderCoreShader
+		{
+			get
+			{
+				if (!attemptedThunderCoreLoad && !Main.dedServ)
+				{
+					attemptedThunderCoreLoad = true;
+					thunderCoreShader = LoadShader("WeepForTheDeparted/Content/Shaders/ThunderCoreLightning.fxc");
+				}
+				return thunderCoreShader;
+			}
+		}
+
+		public static Effect WitheredRiverShader
+		{
+			get
+			{
+				if (!attemptedWitheredRiverLoad && !Main.dedServ)
+				{
+					attemptedWitheredRiverLoad = true;
+					witheredRiverShader = LoadShader("WeepForTheDeparted/Content/Shaders/WitheredRiver.fxc");
+				}
+				return witheredRiverShader;
+			}
+		}
+
+		public static Effect UltQuadShader
+		{
+			get
+			{
+				if (!attemptedUltQuadLoad && !Main.dedServ)
+				{
+					attemptedUltQuadLoad = true;
+					ultQuadShader = LoadShader("WeepForTheDeparted/Content/Shaders/UltQuad.fxc");
+				}
+				return ultQuadShader;
 			}
 		}
 	}

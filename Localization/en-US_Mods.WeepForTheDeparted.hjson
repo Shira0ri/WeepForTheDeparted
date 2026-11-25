@@ -18,6 +18,7 @@ Mods: {
 				Headers: {
 					WeaponScaling: Weapon Scaling Settings
 					BossTracking: Boss Tracking Settings
+					GameplayBalance: Gameplay Balance Settings
 				}
 
 				BaseSwordDamage: {
@@ -44,6 +45,23 @@ Mods: {
 					Label: Include Calamity Bosses
 					Tooltip: When enabled, bosses from the Calamity Mod are counted toward progression scaling.
 				}
+
+				BalanceMode: {
+					Label: Charm Balance Mode
+					Tooltip: Controls whether charms use Calamity-tuned or Vanilla-tuned scaling. Auto detects Calamity Mod.
+				}
+
+				UnlockAllInscriptionsAndEidolons: {
+					Label: Unlock All Inscriptions & Eidolons (Sandbox)
+					Tooltip: When enabled, bypasses boss progression locks for all 18 Nihility Charms and 7 Eidolons (E1-EX). Ideal for testing or sandbox runs.
+				}
+			}
+
+			WeepBalanceMode: {
+				Tooltip: ""
+				Auto.Label: Auto (Detect Calamity)
+				Calamity.Label: Calamity
+				Vanilla.Label: Vanilla
 			}
 		}
 	}
@@ -68,6 +86,7 @@ Configs: {
 		Headers: {
 			WeaponScaling: Weapon Scaling Header
 			BossTracking: Boss Tracking Header
+			GameplayBalance: Gameplay Balance Header
 		}
 
 		BaseSwordDamage: {
@@ -94,6 +113,35 @@ Configs: {
 			Label: Include Calamity Bosses
 			Tooltip: ""
 		}
+
+		BalanceMode: {
+			Label: Balance Mode
+			Tooltip: ""
+		}
+
+		UnlockAllInscriptionsAndEidolons: {
+			Label: Unlock All Inscriptions & Eidolons (Sandbox)
+			Tooltip: Bypasses boss progression locks for all 18 Nihility Charms and 7 Eidolons.
+		}
+	}
+
+	WeepBalanceMode: {
+		Tooltip: ""
+
+		Auto: {
+			Label: Auto
+			Tooltip: ""
+		}
+
+		Calamity: {
+			Label: Calamity
+			Tooltip: ""
+		}
+
+		Vanilla: {
+			Label: Vanilla
+			Tooltip: ""
+		}
 	}
 }
 
@@ -108,13 +156,51 @@ Projectiles: {
 	BloodBlossomNeedle.DisplayName: Blood Blossom Needle
 	BloodLotusShockwave.DisplayName: Blood Lotus Shockwave
 	MirageWeftThread.DisplayName: Mirage Weft Thread
-	PetalVortex.DisplayName: Petal Vortex
 	ThunderCoreBolt.DisplayName: Thunder Core Bolt
 	VoidFissure.DisplayName: Void Fissure
+	NaughtCycleSlash.DisplayName: Naught Cycle Slash
+	NaughtExWave.DisplayName: Naught Ex Wave
 }
 
 Keybinds: {
 	"Ultimate: Slashed Dream Cries in Red.DisplayName": Ultimate:  Slashed  Dream  Cries in  Red
 	"Domain: Nihility.DisplayName": Domain:  Nihility
 	"Nihility Ledger: Charms & Eidolons.DisplayName": Nihility  Ledger:  Charms &  Eidolons
+}
+
+Buffs: {
+	RainleafCooldownBuff: {
+		DisplayName: Rainleaf Cooldown
+		Description: Void Phasing is recovering and cannot trigger again yet.
+	}
+
+	StillWaterFocusBuff: {
+		DisplayName: Still Water
+		Description: Unbroken poise sharpens Naught's edge (+20% True Melee Crit Chance and +20% Crit Damage).
+	}
+
+	AbyssGripDebuff: {
+		DisplayName: Grip of the Abyss
+		Description: Ensnared by the abyss; True Melee damage taken is increased per unique debuff.
+	}
+
+	WitheredRiverDebuff: {
+		DisplayName: Withered River
+		Description: Corrosion of the dried Lethe reduces Damage Reduction by 10%.
+	}
+
+	ShadowCrucibleDebuff: {
+		DisplayName: Shadow Crucible
+		Description: Trapped in Nihility's furnace; DoT damage is amplified inside clone zones and stored for cycle-expiry detonation.
+	}
+
+	SiphonHasteBuff: {
+		DisplayName: Siphon of the Departed
+		Description: Crimson vitality surges through your steps (+15% movement speed and acceleration).
+	}
+
+	EmancipatorWillBuff: {
+		DisplayName: Severed Will
+		Description: Post-Ultimate surge grants +20% True Melee Crit Chance to Naught and its echoes.
+	}
 }

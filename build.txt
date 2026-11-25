@@ -3,5 +3,6 @@ author = Shiraori
 version = 0.1.0
 homepage = https://github.com/
 modReferences = InnoVault
+sortAfter = CalamityMod, CalamityOverhaul
 buildIgnore = scratch/*, media/*, TestComp*.png, *.txt, *.md, *.bat
 

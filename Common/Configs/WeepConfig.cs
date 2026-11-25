@@ -5,6 +5,13 @@ using Terraria.ModLoader.Config;
 
 namespace WeepForTheDeparted.Common.Configs
 {
+	public enum WeepBalanceMode
+	{
+		Auto,
+		Calamity,
+		Vanilla
+	}
+
 	public class WeepConfig : ModConfig
 	{
 		public override ConfigScope Mode => ConfigScope.ServerSide;
@@ -32,5 +39,12 @@ namespace WeepForTheDeparted.Common.Configs
 
 		[DefaultValue(true)]
 		public bool IncludeCalamityBosses { get; set; } = true;
+
+		[Header("GameplayBalance")]
+		[DefaultValue(WeepBalanceMode.Auto)]
+		public WeepBalanceMode BalanceMode { get; set; } = WeepBalanceMode.Auto;
+
+		[DefaultValue(false)]
+		public bool UnlockAllInscriptionsAndEidolons { get; set; } = false;
 	}
 }

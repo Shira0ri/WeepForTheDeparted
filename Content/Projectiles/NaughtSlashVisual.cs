@@ -33,6 +33,8 @@ namespace WeepForTheDeparted.Content.Projectiles
 		public int MaxTime = 18;
 		public float SlashRadius = 130f;
 		public float SlashSpan = 2.8f;
+		public bool AnchorToOwner = true;
+		public bool VisualOnly = false;
 
 		public Vector3 ColHot = new Vector3(1.0f, 0.92f, 1.0f);
 		public Vector3 ColBright = new Vector3(0.82f, 0.15f, 1.0f);
@@ -103,8 +105,8 @@ namespace WeepForTheDeparted.Content.Projectiles
 
 		public override void AI()
 		{
-			// Keep centered on owner while active
-			if (Owner != null && Owner.active)
+			// Keep centered on owner while active (unless detached for clone mirror slashes)
+			if (AnchorToOwner && Owner != null && Owner.active)
 			{
 				Projectile.Center = Owner.MountedCenter;
 			}
@@ -112,6 +114,9 @@ namespace WeepForTheDeparted.Content.Projectiles
 
 		public override bool? CanHitNPC(NPC target)
 		{
+			if (VisualOnly)
+				return false;
+
 			if (ParentSwing != null && ParentSwing.HasHitNPC(target.whoAmI))
 				return false;
 

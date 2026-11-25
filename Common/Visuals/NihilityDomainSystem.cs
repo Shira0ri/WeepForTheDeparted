@@ -73,13 +73,15 @@ namespace WeepForTheDeparted.Common.Visuals
 		public static float DomainRevealStep { get; set; } = 1f / 300f; // 5.0s for opening
 		public static float DomainCloseStep { get; set; } = 1f / 150f;  // 2.5s for reverse wave
 
-		// Wave 2: Ultimate Terrain Darkening (3.0s, unrenders terrain in DrawNPCsOverTiles, leaves background sky intact)
+		// Wave 2: Ultimate Terrain Darkening (3.0s expand on unsheath, reverse contraction during sheathing to restore terrain)
 		public static bool UltWaveActive { get; set; } = false;
+		public static bool UltWaveClosingActive { get; set; } = false;
 		public static Vector2 UltWaveOrigin { get; set; }
 		public static float UltWaveRadius { get; set; } = 0f;
 		public static float UltWaveMaxRadius { get; set; } = 2800f;
 		public static float UltWaveProgress { get; set; } = 0f;
 		public static float UltWaveStep { get; set; } = 1f / 180f;
+		public static float UltWaveCloseStep { get; set; } = 1f / 154f;
 		public static float WorldDarkenAmount { get; set; } = 0f;
 		public static float TargetWorldDarken { get; set; } = 0f;
 
@@ -120,6 +122,7 @@ namespace WeepForTheDeparted.Common.Visuals
 		{
 			// Ultimate unsheath wave: 3.0 seconds (180 ticks), darkens mundane terrain into domain reflection
 			UltWaveActive = true;
+			UltWaveClosingActive = false;
 			UltWaveOrigin = origin;
 			UltWaveRadius = 0f;
 			UltWaveProgress = 0f;
@@ -131,11 +134,46 @@ namespace WeepForTheDeparted.Common.Visuals
 			DomainRevealActive = false;
 			DomainClosingActive = false;
 			DomainRevealProgress = 1f;
+			DomainRevealRadius = DomainRevealMaxRadius;
+		}
+
+		public static bool IsPositionInsideDomain(Vector2 worldPos)
+		{
+			if (!IsDomainActive || DomainRevealRadius <= 16f)
+				return false;
+
+			return Vector2.DistanceSquared(worldPos, DomainRevealOrigin) <= DomainRevealRadius * DomainRevealRadius;
+		}
+
+		public static void StartReflectionRippleReverse(Vector2 origin, float durationTicks = 154f)
+		{
+			if (UltWaveClosingActive || (!UltWaveActive && WorldDarkenAmount <= 0.005f))
+				return;
+
+			// If the opening wave was still expanding, start seamlessly from its current radius on the quad ease-in curve
+			if (!UltWaveActive || UltWaveProgress >= 1f || UltWaveRadius <= 0f)
+			{
+				UltWaveProgress = 1f;
+				UltWaveRadius = UltWaveMaxRadius;
+			}
+			else
+			{
+				float currentNorm = MathHelper.Clamp(UltWaveRadius / UltWaveMaxRadius, 0f, 1f);
+				UltWaveProgress = (float)Math.Sqrt(currentNorm);
+			}
+
+			UltWaveActive = false;
+			UltWaveClosingActive = true;
+			UltWaveOrigin = origin;
+			UltWaveCloseStep = UltWaveProgress / Math.Max(1f, durationTicks);
+			TargetWorldDarken = 1f;
+			WorldDarkenAmount = 1f;
 		}
 
 		public static void ResetReflectionRipple()
 		{
 			UltWaveActive = false;
+			UltWaveClosingActive = false;
 			UltWaveProgress = 0f;
 			UltWaveRadius = 0f;
 			TargetWorldDarken = 0f;
@@ -364,6 +402,20 @@ namespace WeepForTheDeparted.Common.Visuals
 				if (UltWaveProgress >= 1f)
 				{
 					UltWaveActive = false;
+				}
+			}
+
+			// Advance ultimate reverse wave contraction during sheathing to restore terrain rendering
+			if (UltWaveClosingActive)
+			{
+				UltWaveProgress = Math.Max(0f, UltWaveProgress - UltWaveCloseStep);
+
+				float t = UltWaveProgress;
+				UltWaveRadius = t * t * UltWaveMaxRadius;
+
+				if (UltWaveProgress <= 0.0001f)
+				{
+					ResetReflectionRipple();
 				}
 			}
 
