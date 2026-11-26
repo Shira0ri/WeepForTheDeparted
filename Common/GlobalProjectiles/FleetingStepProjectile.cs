@@ -13,7 +13,7 @@ namespace WeepForTheDeparted.Common.GlobalProjectiles
 	/// Global hostile projectile time-dilation for Fleeting Petal Step (FleetingStep).
 	/// Runs AI at 50% cadence (every other sub-update) while moving smoothly at 0.5x velocity
 	/// every tick so homing, gravity, extraUpdates, and directional PreDraw remain accurate
-	/// and snap cleanly back to 100% speed when the 3.0s window expires.
+	/// and snap cleanly back to 100% speed when the 2.5s (150-tick) window expires.
 	/// </summary>
 	public class FleetingStepProjectile : GlobalProjectile
 	{

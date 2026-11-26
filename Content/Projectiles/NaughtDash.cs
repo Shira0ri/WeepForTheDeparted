@@ -63,7 +63,8 @@ namespace WeepForTheDeparted.Content.Projectiles
 				Owner.direction = dashDir.X >= 0 ? 1 : -1;
 
 				// Calculate safe dash distance stopping at solid terrain
-				float maxReach = MathHelper.Clamp(toMouse.Length(), 140f, 320f);
+				var profile = WeepBalance.Active;
+				float maxReach = MathHelper.Clamp(toMouse.Length(), profile.DashMinDistPx, profile.DashMaxDistPx);
 				totalDist = maxReach;
 				targetPos = startPos;
 
@@ -87,51 +88,49 @@ namespace WeepForTheDeparted.Content.Projectiles
 				{
 					int cloneType = ModContent.ProjectileType<NaughtClone>();
 					int existingRemaining = -1;
+					int maxClones = naughtPlayer.HasShadowMarionette
+						? NaughtClone.MaxMarionetteClones
+						: profile.BasekitMaxClones;
+					var activeClones = new System.Collections.Generic.List<NaughtClone>(8);
 
-					if (naughtPlayer.HasShadowMarionette)
+					for (int i = 0; i < Main.maxProjectiles; i++)
 					{
-						// Shadow Marionette: Cap concurrent clones at 4, silently evicting the oldest clone(s)
-						var activeClones = new System.Collections.Generic.List<NaughtClone>(8);
-						for (int i = 0; i < Main.maxProjectiles; i++)
+						Projectile p = Main.projectile[i];
+						if (p.active && p.owner == Owner.whoAmI && p.type == cloneType && p.ModProjectile is NaughtClone existingClone)
 						{
-							Projectile p = Main.projectile[i];
-							if (p.active && p.owner == Owner.whoAmI && p.type == cloneType && p.ModProjectile is NaughtClone existingClone)
+							if (naughtPlayer.HasShadowMarionette)
 							{
 								activeClones.Add(existingClone);
 							}
-						}
-
-						if (activeClones.Count >= NaughtClone.MaxMarionetteClones)
-						{
-							activeClones.Sort(static (a, b) =>
+							else if (!existingClone.SyncDissipating)
 							{
-								int seqCmp = a.SpawnSequence.CompareTo(b.SpawnSequence);
-								return seqCmp != 0 ? seqCmp : a.Projectile.whoAmI.CompareTo(b.Projectile.whoAmI);
-							});
-
-							int toRemove = activeClones.Count - NaughtClone.MaxMarionetteClones + 1;
-							for (int r = 0; r < toRemove; r++)
-							{
-								activeClones[r].SuppressCycleOnKill = true;
-								activeClones[r].Projectile.Kill();
-							}
-						}
-					}
-					else
-					{
-						// Basekit & other charms: Account for Main.projectile update order so slot reuse never causes a 1-tick expiry desync
-						for (int i = 0; i < Main.maxProjectiles; i++)
-						{
-							Projectile p = Main.projectile[i];
-							if (p.active && p.owner == Owner.whoAmI && p.type == cloneType)
-							{
+								// Account for Main.projectile update order so slot reuse never causes a 1-tick expiry desync
 								int rem = p.timeLeft - (i > Projectile.whoAmI ? 1 : 0);
 								if (rem > 0)
 								{
-									existingRemaining = rem;
-									break;
+									if (existingRemaining < 0)
+									{
+										existingRemaining = rem;
+									}
+									activeClones.Add(existingClone);
 								}
 							}
+						}
+					}
+
+					if (activeClones.Count >= maxClones)
+					{
+						activeClones.Sort(static (a, b) =>
+						{
+							int seqCmp = a.SpawnSequence.CompareTo(b.SpawnSequence);
+							return seqCmp != 0 ? seqCmp : a.Projectile.whoAmI.CompareTo(b.Projectile.whoAmI);
+						});
+
+						int toRemove = activeClones.Count - maxClones + 1;
+						for (int r = 0; r < toRemove; r++)
+						{
+							activeClones[r].SuppressCycleOnKill = true;
+							activeClones[r].Projectile.Kill();
 						}
 					}
 
@@ -186,15 +185,18 @@ namespace WeepForTheDeparted.Content.Projectiles
 				// 3. Play Onikiri's katana sprint audio!
 				SoundEngine.PlaySound(WeepSound.KatanaSprint with { Volume = 0.85f, Pitch = 0.05f }, Owner.MountedCenter);
 
-				// Set dash cooldown on player (50% off with MirageWeft, 25% off with FleetingStep)
-				naughtPlayer.DashCooldown = naughtPlayer.HasMirageWeft ? 30 : (naughtPlayer.HasFleetingStep ? 45 : 60);
+				// Set dash cooldown from active balance profile scaled by Soul mobility charms
+				float cdMult = naughtPlayer.HasMirageWeft
+					? profile.MirageWeftDashCdMult
+					: (naughtPlayer.HasFleetingStep ? profile.FleetingStepDashCdMult : 1f);
+				naughtPlayer.DashCooldown = Math.Max(1, (int)MathF.Round(profile.DashCooldownTicks * cdMult));
 
 				if (Main.myPlayer == Owner.whoAmI)
 				{
 					// Mirage Weft: Maintain a single active thread controller while clones persist
 					if (naughtPlayer.HasMirageWeft && !HasActiveMirageWeftThread(Owner.whoAmI))
 					{
-						int threadDmg = naughtPlayer.GetNaughtDamage(0.25f);
+						int threadDmg = naughtPlayer.GetNaughtDamage(profile.MirageWeftDamageMult);
 						int threadIdx = Projectile.NewProjectile(
 							Projectile.GetSource_FromThis(),
 							Owner.Center,
@@ -209,14 +211,14 @@ namespace WeepForTheDeparted.Content.Projectiles
 						}
 					}
 
-					// Fleeting Petal Step: Dashing through enemies restores +1 Slashed Dream & activates 3s global hostile projectile freeze/drop (30s shared cooldown)
+					// Fleeting Petal Step: Dashing through enemies restores +1 Slashed Dream & activates global hostile projectile slowdown
 					TryTriggerFleetingStep(naughtPlayer, checkSweptPath: true);
 				}
 			}
 
-			// Evasion & invulnerability during flash step
+			// Evasion & invulnerability during flash step (capped linger so total i-frames match active balance profile)
 			Owner.immune = true;
-			Owner.immuneTime = 16;
+			Owner.immuneTime = Math.Max(Owner.immuneTime, WeepBalance.Active.DashLingerIFrames);
 			Owner.immuneNoBlink = true;
 
 			// Smooth interpolation from start to destination using InnoVault easing
@@ -292,10 +294,11 @@ namespace WeepForTheDeparted.Content.Projectiles
 				if (!hit)
 					continue;
 
+				var profile = WeepBalance.Active;
 				fleetingStepTriggeredThisDash = true;
 				naughtPlayer.AddSlashedDream(1);
-				naughtPlayer.FleetingStepDreamCooldown = 1800; // 30.0s shared cooldown
-				naughtPlayer.FleetingStepSlowTimer = 180;      // 3.0s global hostile projectile suspension/drop
+				naughtPlayer.FleetingStepDreamCooldown = profile.FleetingStepCooldownTicks;
+				naughtPlayer.FleetingStepSlowTimer = profile.FleetingStepSlowTicks;
 
 				SoundEngine.PlaySound(SoundID.Item29 with { Pitch = 0.65f, Volume = 0.7f }, Owner.MountedCenter);
 

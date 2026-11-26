@@ -27,6 +27,7 @@ namespace WeepForTheDeparted.Content.Projectiles.Charms
 		private const float CruiseSpeed = 18f;
 
 		private readonly List<Vector2> trailPoints = new List<Vector2>(MaxTrailPoints);
+		private readonly Dictionary<int, int> perNpcHits = new Dictionary<int, int>();
 		private bool initialized;
 		private int ageUpdates;
 		private int launchBurstUpdates = DefaultLaunchUpdates;
@@ -87,16 +88,19 @@ namespace WeepForTheDeparted.Content.Projectiles.Charms
 			Projectile.hostile = false;
 			Projectile.tileCollide = false;
 			Projectile.ignoreWater = true;
-			Projectile.penetrate = -1; // Infinitely pierces
-			Projectile.timeLeft = 240; // 120 real ticks (2.0s active flight with extraUpdates = 1)
+			Projectile.penetrate = -1; // Infinitely pierces crowds (per-enemy cap enforced in CanHitNPC)
+			Projectile.timeLeft = WeepBalance.Active.BladesongFlightUpdates;
 			Projectile.DamageType = WeepCompatibility.TrueMelee;
 			Projectile.usesLocalNPCImmunity = true;
-			Projectile.localNPCHitCooldown = 15; // 7.5 real ticks per NPC
+			Projectile.localNPCHitCooldown = WeepBalance.Active.BladesongHitCooldownUpdates;
 			Projectile.extraUpdates = 1;
 		}
 
 		public override bool? CanHitNPC(NPC target)
 		{
+			if (perNpcHits.TryGetValue(target.whoAmI, out int hits) && hits >= WeepBalance.Active.BladesongMaxHitsPerNpc)
+				return false;
+
 			// Prevent tagging the originating enemy on spawn before clearing the outward blossom arc
 			if (ageUpdates < launchBurstUpdates && OriginRootWhoAmI >= 0 && GetRootNpcIndex(target) == OriginRootWhoAmI)
 				return false;
@@ -124,6 +128,7 @@ namespace WeepForTheDeparted.Content.Projectiles.Charms
 					Player owner = Main.player[Projectile.owner];
 					if (owner.active && owner.TryGetModPlayer<NaughtPlayer>(out var np))
 					{
+						Projectile.damage = np.GetNaughtDamage(WeepBalance.Active.BladesongNeedleMult);
 						Projectile.CritChance = np.GetNaughtCritChance();
 					}
 				}
@@ -211,6 +216,9 @@ namespace WeepForTheDeparted.Content.Projectiles.Charms
 				if (!npc.CanBeChasedBy() && npc.type != NPCID.TargetDummy)
 					continue;
 
+				if (perNpcHits.TryGetValue(npc.whoAmI, out int hits) && hits >= WeepBalance.Active.BladesongMaxHitsPerNpc)
+					continue;
+
 				float dSq = Vector2.DistanceSquared(Projectile.Center, npc.Center);
 				if (dSq >= maxDistSq)
 					continue;
@@ -239,6 +247,9 @@ namespace WeepForTheDeparted.Content.Projectiles.Charms
 
 		public override void OnHitNPC(NPC target, NPC.HitInfo hit, int damageDone)
 		{
+			perNpcHits.TryGetValue(target.whoAmI, out int hits);
+			perNpcHits[target.whoAmI] = hits + 1;
+
 			if (Main.dedServ)
 				return;
 

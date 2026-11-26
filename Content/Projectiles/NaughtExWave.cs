@@ -27,6 +27,11 @@ namespace WeepForTheDeparted.Content.Projectiles
 		public const float WaveHalfWidth = 55f;
 		public const float WaveThickness = 24f;
 
+		/// <summary>
+		/// Active balance-profile damage multiplier for EX Spatial Waves.
+		/// </summary>
+		public static float DamageMult => WeepBalance.Active.ExWaveDamageMult;
+
 		public override string Texture => "WeepForTheDeparted/Content/Projectiles/SlashBrush01";
 
 		public int ComboStep

@@ -20,9 +20,18 @@ namespace WeepForTheDeparted.Content.Projectiles.Charms
 
 		private const int MaxLifetime = 35;
 		private const float MinRadius = 10f;
-		private const float MaxRadius = 240f;
-		private const float QuadHalfRadius = 276f;
 
+		// Shared per-player / per-NPC hit timestamp (+1 so 0 strictly means "never hit")
+		// preventing simultaneous Blood Lotus shockwaves from stacking damage on the same target.
+		private static readonly uint[,] lastGlobalHitTick = new uint[Main.maxPlayers, Main.maxNPCs];
+
+		public static void ResetGlobalHitCooldowns()
+		{
+			Array.Clear(lastGlobalHitTick, 0, lastGlobalHitTick.Length);
+		}
+
+		private float maxRadius = 184f;
+		private float quadHalfRadius = 184f * 1.15f;
 		private float currentRadius = MinRadius;
 		private Vector2 anchorCenter;
 		private bool initialized;
@@ -47,12 +56,30 @@ namespace WeepForTheDeparted.Content.Projectiles.Charms
 			Projectile.timeLeft = MaxLifetime;
 			Projectile.DamageType = WeepCompatibility.TrueMelee;
 			Projectile.usesLocalNPCImmunity = true;
-			Projectile.localNPCHitCooldown = 30;
+			Projectile.localNPCHitCooldown = WeepBalance.Active.BloodLotusGlobalHitCooldownTicks;
 		}
 
 		public override bool ShouldUpdatePosition() => false;
 
 		public override bool? CanDamage() => true;
+
+		public override bool? CanHitNPC(NPC target)
+		{
+			if (target == null || !target.active || target.whoAmI < 0 || target.whoAmI >= Main.maxNPCs)
+				return false;
+
+			int ownerIdx = Projectile.owner;
+			if (ownerIdx < 0 || ownerIdx >= Main.maxPlayers)
+				return null;
+
+			uint tickStamp = Main.GameUpdateCount + 1u;
+			uint lastTick = lastGlobalHitTick[ownerIdx, target.whoAmI];
+			int cooldown = WeepBalance.Active.BloodLotusGlobalHitCooldownTicks;
+			if (lastTick != 0 && tickStamp - lastTick < (uint)cooldown)
+				return false;
+
+			return null;
+		}
 
 		public override bool? Colliding(Rectangle projHitbox, Rectangle targetHitbox)
 		{
@@ -69,6 +96,8 @@ namespace WeepForTheDeparted.Content.Projectiles.Charms
 				anchorCenter = Projectile.Center;
 				Projectile.velocity = Vector2.Zero;
 				baseRotation = Main.rand.NextFloat(MathHelper.TwoPi);
+				maxRadius = WeepBalance.Active.BloodLotusMaxRadiusPx;
+				quadHalfRadius = maxRadius * 1.15f;
 
 				if (!Main.dedServ)
 				{
@@ -77,7 +106,7 @@ namespace WeepForTheDeparted.Content.Projectiles.Charms
 			}
 
 			float progress = 1f - (Projectile.timeLeft / (float)MaxLifetime);
-			currentRadius = MathHelper.Lerp(MinRadius, MaxRadius, MathF.Sqrt(progress));
+			currentRadius = MathHelper.Lerp(MinRadius, maxRadius, MathF.Sqrt(progress));
 
 			// Resize hitbox while keeping the center strictly locked to the dying enemy's center
 			int diameter = Math.Max(20, (int)MathF.Round(currentRadius * 2f));
@@ -131,6 +160,12 @@ namespace WeepForTheDeparted.Content.Projectiles.Charms
 
 		public override void OnHitNPC(NPC target, NPC.HitInfo hit, int damageDone)
 		{
+			int ownerIdx = Projectile.owner;
+			if (ownerIdx >= 0 && ownerIdx < Main.maxPlayers && target != null && target.whoAmI >= 0 && target.whoAmI < Main.maxNPCs)
+			{
+				lastGlobalHitTick[ownerIdx, target.whoAmI] = Main.GameUpdateCount + 1u;
+			}
+
 			for (int i = 0; i < 4; i++)
 			{
 				Dust d = Dust.NewDustPerfect(target.Center, DustID.LifeDrain, Main.rand.NextVector2Circular(4f, 4f), 0, default, 1.3f);
@@ -192,16 +227,16 @@ namespace WeepForTheDeparted.Content.Projectiles.Charms
 			fx.Parameters["transformMatrix"]?.SetValue(transformMatrix);
 			fx.Parameters["uTime"]?.SetValue(Main.GlobalTimeWrappedHourly);
 			fx.Parameters["uProgress"]?.SetValue(progress);
-			fx.Parameters["uRingNorm"]?.SetValue(MathHelper.Clamp(currentRadius / QuadHalfRadius, 0.01f, 0.92f));
+			fx.Parameters["uRingNorm"]?.SetValue(MathHelper.Clamp(currentRadius / quadHalfRadius, 0.01f, 0.92f));
 			fx.Parameters["uIntensity"]?.SetValue(intensity);
 			fx.Parameters["uRotation"]?.SetValue(baseRotation + progress * 0.35f);
 			fx.Parameters["uNoiseTex"]?.SetValue(noise);
 
 			VertexPositionColorTexture[] verts = new VertexPositionColorTexture[4];
-			verts[0] = new VertexPositionColorTexture(new Vector3(worldCenter.X - QuadHalfRadius, worldCenter.Y - QuadHalfRadius, 0f), Color.White, new Vector2(0f, 0f));
-			verts[1] = new VertexPositionColorTexture(new Vector3(worldCenter.X + QuadHalfRadius, worldCenter.Y - QuadHalfRadius, 0f), Color.White, new Vector2(1f, 0f));
-			verts[2] = new VertexPositionColorTexture(new Vector3(worldCenter.X - QuadHalfRadius, worldCenter.Y + QuadHalfRadius, 0f), Color.White, new Vector2(0f, 1f));
-			verts[3] = new VertexPositionColorTexture(new Vector3(worldCenter.X + QuadHalfRadius, worldCenter.Y + QuadHalfRadius, 0f), Color.White, new Vector2(1f, 1f));
+			verts[0] = new VertexPositionColorTexture(new Vector3(worldCenter.X - quadHalfRadius, worldCenter.Y - quadHalfRadius, 0f), Color.White, new Vector2(0f, 0f));
+			verts[1] = new VertexPositionColorTexture(new Vector3(worldCenter.X + quadHalfRadius, worldCenter.Y - quadHalfRadius, 0f), Color.White, new Vector2(1f, 0f));
+			verts[2] = new VertexPositionColorTexture(new Vector3(worldCenter.X - quadHalfRadius, worldCenter.Y + quadHalfRadius, 0f), Color.White, new Vector2(0f, 1f));
+			verts[3] = new VertexPositionColorTexture(new Vector3(worldCenter.X + quadHalfRadius, worldCenter.Y + quadHalfRadius, 0f), Color.White, new Vector2(1f, 1f));
 
 			foreach (EffectPass pass in fx.CurrentTechnique.Passes)
 			{

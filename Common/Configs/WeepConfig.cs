@@ -19,6 +19,13 @@ namespace WeepForTheDeparted.Common.Configs
 		public static WeepConfig Instance => ModContent.GetInstance<WeepConfig>();
 
 		[Header("WeaponScaling")]
+		/// <summary>
+		/// When false (default), WeepBalance.Active controls base sword damage, per-boss damage,
+		/// per-boss crit, and Calamity stage multipliers. Enable to use the manual slider overrides below.
+		/// </summary>
+		[DefaultValue(false)]
+		public bool OverrideWeaponScaling { get; set; } = false;
+
 		[DefaultValue(25)]
 		[Range(1, 1000)]
 		public int BaseSwordDamage { get; set; } = 25;
@@ -41,6 +48,10 @@ namespace WeepForTheDeparted.Common.Configs
 		public bool IncludeCalamityBosses { get; set; } = true;
 
 		[Header("GameplayBalance")]
+		/// <summary>
+		/// Governs the unified Vanilla/Calamity Balance Profile (weapon scaling, basekit combat,
+		/// all 18 Nihility Charms, and Eidolons E1-EX). Auto detects Calamity Mod.
+		/// </summary>
 		[DefaultValue(WeepBalanceMode.Auto)]
 		public WeepBalanceMode BalanceMode { get; set; } = WeepBalanceMode.Auto;
 

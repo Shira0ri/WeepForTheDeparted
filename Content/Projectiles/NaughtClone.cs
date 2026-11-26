@@ -326,7 +326,7 @@ namespace WeepForTheDeparted.Content.Projectiles
 			if (Owner == null || !Owner.active || naughtPlayer == null || !naughtPlayer.HasSynchronizedExecution)
 				return;
 
-			int damage = Math.Max(1, naughtPlayer.GetNaughtDamage(0.45f * damageScale));
+			int damage = Math.Max(1, naughtPlayer.GetNaughtDamage(WeepBalance.Active.SyncMirrorRainbladeMult * damageScale));
 			Projectile.CritChance = naughtPlayer.GetNaughtCritChance();
 
 			SoundEngine.PlaySound(SoundID.Item71 with { Pitch = 0.35f, Volume = 0.75f }, Projectile.Center);
@@ -412,7 +412,7 @@ namespace WeepForTheDeparted.Content.Projectiles
 
 			if (hasLiveTarget && (!target.dontTakeDamage || target.type == NPCID.TargetDummy))
 			{
-				int damage = Math.Max(1, naughtPlayer.GetNaughtDamage(1.15f * damageScale));
+				int damage = Math.Max(1, naughtPlayer.GetNaughtDamage(WeepBalance.Active.SyncCrossSlashMult * damageScale));
 				Projectile.CritChance = naughtPlayer.GetNaughtCritChance();
 				naughtPlayer.StrikeNPC(target, damage, Math.Sign(dashDir.X), crit: true, knockBack: 8f, sourceProj: Projectile, isUltimate: true);
 			}

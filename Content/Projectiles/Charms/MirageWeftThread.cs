@@ -79,7 +79,7 @@ namespace WeepForTheDeparted.Content.Projectiles.Charms
 			Projectile.DamageType = WeepCompatibility.TrueMelee;
 			Projectile.noEnchantments = false;
 			Projectile.usesLocalNPCImmunity = true;
-			Projectile.localNPCHitCooldown = 60;
+			Projectile.localNPCHitCooldown = WeepBalance.Active.MirageWeftHitCooldownTicks;
 			Projectile.netImportant = true;
 		}
 
@@ -115,10 +115,12 @@ namespace WeepForTheDeparted.Content.Projectiles.Charms
 				return;
 			}
 
+			var profile = WeepBalance.Active;
 			Projectile.timeLeft = 2;
-			Projectile.damage = naughtPlayer.GetNaughtDamage(0.25f);
+			Projectile.damage = naughtPlayer.GetNaughtDamage(profile.MirageWeftDamageMult);
 			Projectile.CritChance = naughtPlayer.GetNaughtCritChance();
 			Projectile.knockBack = 0f;
+			Projectile.localNPCHitCooldown = profile.MirageWeftHitCooldownTicks;
 
 			UpdateSegmentBoundingBox();
 		}

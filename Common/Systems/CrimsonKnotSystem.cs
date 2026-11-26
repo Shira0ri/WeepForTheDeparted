@@ -22,16 +22,20 @@ namespace WeepForTheDeparted.Common.Systems
 	/// </summary>
 	public class CrimsonKnotSystem : ModSystem
 	{
-		private bool wasBossInCombat = false;
 		private int vanillaEoWPeakTotalLife = 0;
 		private byte vanillaEoWMilestonesCrossed = 0;
 
 		public override void ClearWorld()
 		{
-			wasBossInCombat = false;
 			vanillaEoWPeakTotalLife = 0;
 			vanillaEoWMilestonesCrossed = 0;
 			MirageWeftThread.ResetPendingDebuffCheck();
+			BloodLotusShockwave.ResetGlobalHitCooldowns();
+		}
+
+		public override void OnWorldUnload()
+		{
+			BloodLotusShockwave.ResetGlobalHitCooldowns();
 		}
 
 		public override void PostUpdateProjectiles()
@@ -417,7 +421,7 @@ namespace WeepForTheDeparted.Common.Systems
 					int crossed = knotData.EvaluateRedOniMilestones(currentRatio, canAward);
 					if (crossed > 0)
 					{
-						int dreamGain = crossed * 2;
+						int dreamGain = crossed * WeepBalance.Active.RedOniMilestoneDream;
 						naughtPlayer.AddSlashedDream(dreamGain);
 						CrimsonKnotGlobalNPC.TriggerMilestoneFeedback(localPlayer, anchor, dreamGain);
 					}
@@ -452,7 +456,7 @@ namespace WeepForTheDeparted.Common.Systems
 
 					if (crossed > 0)
 					{
-						int dreamGain = crossed * 2;
+						int dreamGain = crossed * WeepBalance.Active.RedOniMilestoneDream;
 						naughtPlayer.AddSlashedDream(dreamGain);
 						CrimsonKnotGlobalNPC.TriggerMilestoneFeedback(localPlayer, vanillaEoWNearest, dreamGain);
 					}
@@ -464,21 +468,11 @@ namespace WeepForTheDeparted.Common.Systems
 				vanillaEoWMilestonesCrossed = 0;
 			}
 
-			// 3. Boss Combat Opener: fires once when transitioning into boss combat within 1800f px
-			if (anyBossInRange)
+			// 3. Boss Combat Opener: fires once per boss encounter when entering range (1800f px)
+			if (anyBossInRange && canAward && naughtPlayer.CanTriggerRedOniBossEncounter())
 			{
-				if (!wasBossInCombat)
-				{
-					wasBossInCombat = true;
-					if (canAward)
-					{
-						naughtPlayer.TryTriggerRedOniOpener(applyKnots: true);
-					}
-				}
-			}
-			else
-			{
-				wasBossInCombat = false;
+				naughtPlayer.MarkRedOniBossEncounterTriggered();
+				naughtPlayer.TryTriggerRedOniOpener(applyKnots: true);
 			}
 		}
 

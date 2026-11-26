@@ -293,10 +293,10 @@ namespace WeepForTheDeparted.Common.GlobalNPCs
 
 					if (isNew || isRefreshed)
 					{
-						// Scourge of the Withered River: debuffs on bosses linger 50% longer (strictly on initial application)
+						// Scourge of the Withered River: debuffs on bosses linger longer (strictly on initial application)
 						if (isNew && naughtPlayer.HasWitheredRiver && IsBossTarget(npc))
 						{
-							int extendedTime = (int)MathF.Round(time * 1.50f);
+							int extendedTime = (int)MathF.Round(time * WeepBalance.Active.WitheredRiverBossDurationMult);
 							if (extendedTime > time)
 							{
 								npc.buffTime[i] = extendedTime;
@@ -394,7 +394,7 @@ namespace WeepForTheDeparted.Common.GlobalNPCs
 					int crossed = EvaluateRedOniMilestones(0f, canAward);
 					if (crossed > 0)
 					{
-						int dreamGain = crossed * 2;
+						int dreamGain = crossed * WeepBalance.Active.RedOniMilestoneDream;
 						np.AddSlashedDream(dreamGain);
 						TriggerMilestoneFeedback(localPlayer, anchor, dreamGain);
 					}
@@ -441,7 +441,8 @@ namespace WeepForTheDeparted.Common.GlobalNPCs
 				}
 
 				// Spawn expanding Blood Lotus Shockwave scaled via NaughtPlayer True Melee damage
-				float dmgMult = 1.00f + 0.15f * CrimsonKnotStacks;
+				var profile = WeepBalance.Active;
+				float dmgMult = profile.BloodLotusBaseMult + profile.BloodLotusKnotMult * CrimsonKnotStacks;
 				int shockDmg = naughtPlayer.GetNaughtDamage(dmgMult);
 				int projIdx = Projectile.NewProjectile(
 					naughtPlayer.Player.GetSource_FromThis(),
@@ -573,10 +574,10 @@ namespace WeepForTheDeparted.Common.GlobalNPCs
 
 			if (HasWitheredRiverDebuff(npc))
 			{
-				const float WitheredPeel = 0.10f;
-				WeepCompatibility.ApplyUnifiedDRPeel(npc, ref modifiers, WitheredPeel);
+				float witheredPeel = WeepBalance.Active.WitheredRiverDrPeel;
+				WeepCompatibility.ApplyUnifiedDRPeel(npc, ref modifiers, witheredPeel);
 				pendingWitheredDrPeelNpc = npc.whoAmI;
-				pendingWitheredDrPeel = WitheredPeel;
+				pendingWitheredDrPeel = witheredPeel;
 			}
 
 			if (HasAbyssGripDebuff(npc) && WeepCompatibility.IsTrueMeleeDamageClass(modifiers.DamageType))
@@ -596,8 +597,9 @@ namespace WeepForTheDeparted.Common.GlobalNPCs
 			if (overlapCount <= 0)
 				return 1f;
 
-			int extraClones = Math.Clamp(overlapCount - 1, 0, NaughtClone.MaxCrucibleClones - 1);
-			return 2.00f + 0.35f * extraClones;
+			var amps = WeepBalance.Active.CrucibleDotAmps;
+			int idx = Math.Clamp(overlapCount, 1, amps.Length) - 1;
+			return amps[idx];
 		}
 
 		public static void RefreshCrucibleOverlapsIfNeeded()
@@ -725,10 +727,11 @@ namespace WeepForTheDeparted.Common.GlobalNPCs
 
 			if (hasDebuff && naughtPlayer != null && naughtPlayer.HasShadowCrucible)
 			{
-				int maxCap = Math.Max(1, naughtPlayer.GetNaughtDamage(8.0f));
+				var profile = WeepBalance.Active;
+				int maxCap = Math.Max(1, naughtPlayer.GetNaughtDamage(profile.CrucibleWeaponCapMult));
 				int otherDebuffs = naughtPlayer.CountUniqueDebuffsAcrossTarget(npc, crucibleDebuffType);
-				int floorBurst = Math.Min(otherDebuffs, 4) * naughtPlayer.GetNaughtDamage(0.35f);
-				float projected = Math.Max(CrucibleAccumulatedDot * 0.50f, floorBurst);
+				int floorBurst = Math.Min(otherDebuffs, 4) * naughtPlayer.GetNaughtDamage(profile.CrucibleFloorPerDebuff);
+				float projected = Math.Max(CrucibleAccumulatedDot * profile.CruciblePopRatio, floorBurst);
 				CrucibleDisplayedChargeRatio = MathHelper.Clamp(projected / maxCap, 0f, 1f);
 			}
 		}
@@ -776,9 +779,10 @@ namespace WeepForTheDeparted.Common.GlobalNPCs
 			if (Main.netMode == NetmodeID.MultiplayerClient && ownerWhoAmI != Main.myPlayer)
 				return;
 
+			var profile = WeepBalance.Active;
 			int crucibleDebuffType = ModContent.BuffType<ShadowCrucibleDebuff>();
-			int maxCap = Math.Max(1, naughtPlayer.GetNaughtDamage(8.0f));
-			int floorPerDebuff = naughtPlayer.GetNaughtDamage(0.35f);
+			int maxCap = Math.Max(1, naughtPlayer.GetNaughtDamage(profile.CrucibleWeaponCapMult));
+			int floorPerDebuff = naughtPlayer.GetNaughtDamage(profile.CrucibleFloorPerDebuff);
 			bool playedAudio = false;
 
 			for (int i = 0; i < Main.maxNPCs; i++)
@@ -810,7 +814,7 @@ namespace WeepForTheDeparted.Common.GlobalNPCs
 				if (!wasExposed && accumulatedDot <= 0f)
 					continue;
 
-				int dotBurst = (int)MathF.Round(accumulatedDot * 0.50f);
+				int dotBurst = (int)MathF.Round(accumulatedDot * profile.CruciblePopRatio);
 				int floorBurst = Math.Min(otherDebuffs, 4) * floorPerDebuff;
 				int rawBurst = Math.Max(dotBurst, floorBurst);
 				if (rawBurst <= 0)
@@ -819,7 +823,7 @@ namespace WeepForTheDeparted.Common.GlobalNPCs
 				int finalBurst = Math.Min(rawBurst, maxCap);
 				if (IsBossTarget(anchor) && anchor.type != NPCID.TargetDummy)
 				{
-					int bossHpCap = Math.Max(1, (int)(anchor.lifeMax * 0.08f));
+					int bossHpCap = Math.Max(1, (int)(anchor.lifeMax * profile.CrucibleBossHpCapRatio));
 					finalBurst = Math.Min(finalBurst, bossHpCap);
 				}
 
@@ -960,7 +964,7 @@ namespace WeepForTheDeparted.Common.GlobalNPCs
 			var naughtPlayer = (owner != null && owner.active) ? owner.GetModPlayer<NaughtPlayer>() : null;
 			if (naughtPlayer != null && naughtPlayer.HasShadowMarionette && !naughtPlayer.IsPropagatingMarionette)
 			{
-				naughtPlayer.RunMarionetteDamageShare(npc, damageDone);
+				naughtPlayer.RunMarionetteDamageShare(npc, damageDone, naughtPlayer.IsTrueUltimateStrike(projectile));
 			}
 		}
 
@@ -972,11 +976,11 @@ namespace WeepForTheDeparted.Common.GlobalNPCs
 			var naughtPlayer = (player != null && player.active) ? player.GetModPlayer<NaughtPlayer>() : null;
 			if (naughtPlayer != null && naughtPlayer.HasShadowMarionette && !naughtPlayer.IsPropagatingMarionette)
 			{
-				naughtPlayer.RunMarionetteDamageShare(npc, damageDone);
+				naughtPlayer.RunMarionetteDamageShare(npc, damageDone, isTrueUltimateStrike: false);
 			}
 		}
 
-		public static void PropagateMarionetteDamage(NaughtPlayer naughtPlayer, NPC sourceNpc, int damageDone)
+		public static void PropagateMarionetteDamage(NaughtPlayer naughtPlayer, NPC sourceNpc, int damageDone, bool isTrueUltimateStrike = false)
 		{
 			if (naughtPlayer == null || !naughtPlayer.HasShadowMarionette || sourceNpc == null || !sourceNpc.active || damageDone <= 0)
 				return;
@@ -1015,6 +1019,7 @@ namespace WeepForTheDeparted.Common.GlobalNPCs
 				}
 			}
 
+			var profile = WeepBalance.Active;
 			foreach (var kvp in marionetteShareCounts)
 			{
 				NPC target = Main.npc[kvp.Key];
@@ -1022,7 +1027,13 @@ namespace WeepForTheDeparted.Common.GlobalNPCs
 					continue;
 
 				int effectiveClones = Math.Min(kvp.Value, NaughtClone.MaxMarionetteClones);
-				int sharedDmg = (int)MathF.Round(damageDone * 0.15f * effectiveClones);
+				float shareRatio = Math.Min(profile.MarionetteShareCap, profile.MarionetteSharePerClone * effectiveClones);
+				if (isTrueUltimateStrike)
+				{
+					shareRatio *= profile.MarionetteUltShareScale;
+				}
+
+				int sharedDmg = (int)MathF.Round(damageDone * shareRatio);
 				if (sharedDmg <= 0)
 					continue;
 

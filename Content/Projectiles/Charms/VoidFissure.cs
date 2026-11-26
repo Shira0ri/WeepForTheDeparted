@@ -9,6 +9,7 @@ using Terraria.ID;
 using Terraria.ModLoader;
 using WeepForTheDeparted.Common;
 using WeepForTheDeparted.Common.Players;
+using WeepForTheDeparted.Common.Systems;
 using WeepForTheDeparted.Common.UI.NihilityLedger;
 using WeepForTheDeparted.Common.Visuals;
 using WeepForTheDeparted.Content.Shaders;
@@ -20,12 +21,11 @@ namespace WeepForTheDeparted.Content.Projectiles.Charms
 	{
 		public const int PortalLifetime = 540; // 9.0 seconds @ 60 ticks/sec
 		public const float PullRadius = 220f;
-		public const float DamageRadius = 115f;
 		public const float CoreHoldRadius = 26f;
-		public const float QuadHalfSize = 155f;
+		private const float QuadToRadiusRatio = 155f / 115f;
 		public const int HitCooldownTicks = 24; // 2.5 hits/sec (22 hits over 9s)
-		public const float DamageMultiplier = 0.45f;
 		public const float SlowRatio = 0.35f;
+		public const float FallbackBossSearchRange = 1800f;
 
 		public override string Texture => "WeepForTheDeparted/Content/Items/Weapons/Naught";
 
@@ -37,6 +37,8 @@ namespace WeepForTheDeparted.Content.Projectiles.Charms
 		private float portalRotation;
 		private int age;
 		private bool initialized;
+
+		private bool IsFallbackPortal => Projectile.ai[0] >= 0.5f;
 
 		public Player Owner => Main.player[Projectile.owner];
 
@@ -58,12 +60,16 @@ namespace WeepForTheDeparted.Content.Projectiles.Charms
 		public override bool? CanDamage() => false;
 		public override bool ShouldUpdatePosition() => false;
 
-		public void Init(Vector2 portalCenter, float seed = 0f, float rotation = 0f)
+		public void Init(Vector2 portalCenter, float seed = 0f, float rotation = 0f, bool isFallbackPortal = false)
 		{
 			anchorCenter = portalCenter;
 			Projectile.Center = portalCenter;
 			portalSeed = seed > 0f ? seed : Main.rand.NextFloat(0.25f, 12f);
 			portalRotation = rotation;
+			if (isFallbackPortal)
+			{
+				Projectile.ai[0] = 1f;
+			}
 			initialized = true;
 		}
 
@@ -75,6 +81,21 @@ namespace WeepForTheDeparted.Content.Projectiles.Charms
 			}
 			else
 			{
+				float driftSpeed = WeepBalance.Active.VoidHorizonFallbackDriftSpeed;
+				if (IsFallbackPortal && driftSpeed > 0f && !WorldFreezeSystem.IsActive)
+				{
+					NPC nearestBoss = FindNearestBoss(anchorCenter, FallbackBossSearchRange);
+					if (nearestBoss != null)
+					{
+						Vector2 toBoss = nearestBoss.Center - anchorCenter;
+						float dist = toBoss.Length();
+						if (dist > 1f)
+						{
+							float step = Math.Min(driftSpeed, dist);
+							anchorCenter += (toBoss / dist) * step;
+						}
+					}
+				}
 				Projectile.Center = anchorCenter;
 			}
 
@@ -83,8 +104,9 @@ namespace WeepForTheDeparted.Content.Projectiles.Charms
 			NaughtPlayer naughtPlayer = Owner != null && Owner.active ? Owner.GetModPlayer<NaughtPlayer>() : null;
 			bool canStrikeOwner = Main.netMode != NetmodeID.MultiplayerClient || Main.myPlayer == Projectile.owner;
 
+			float damageRadius = WeepBalance.Active.VoidHorizonRadiusPx;
 			float pullRadiusSq = PullRadius * PullRadius;
-			float dmgRadiusSq = DamageRadius * DamageRadius;
+			float dmgRadiusSq = damageRadius * damageRadius;
 			uint currentTick = Main.GameUpdateCount;
 
 			for (int i = 0; i < Main.maxNPCs; i++)
@@ -132,7 +154,7 @@ namespace WeepForTheDeparted.Content.Projectiles.Charms
 			if (!Main.dedServ && Main.rand.NextBool(3))
 			{
 				float angle = Main.rand.NextFloat(MathHelper.TwoPi);
-				float spawnDist = Main.rand.NextFloat(DamageRadius * 0.55f, PullRadius * 0.85f);
+				float spawnDist = Main.rand.NextFloat(damageRadius * 0.55f, PullRadius * 0.85f);
 				Vector2 offset = angle.ToRotationVector2() * spawnDist;
 				Vector2 inwardVel = (-offset).SafeNormalize(Vector2.Zero) * Main.rand.NextFloat(1.8f, 3.6f)
 					+ new Vector2(-offset.Y, offset.X).SafeNormalize(Vector2.Zero) * 1.1f;
@@ -141,6 +163,35 @@ namespace WeepForTheDeparted.Content.Projectiles.Charms
 			}
 
 			Lighting.AddLight(anchorCenter, new Vector3(0.38f, 0.06f, 0.30f));
+		}
+
+		private static NPC FindNearestBoss(Vector2 origin, float maxRange)
+		{
+			NPC best = null;
+			float bestDistSq = maxRange * maxRange;
+
+			for (int i = 0; i < Main.maxNPCs; i++)
+			{
+				NPC npc = Main.npc[i];
+				if (!npc.active || npc.friendly || npc.immortal || npc.lifeMax <= 5)
+					continue;
+
+				bool isBoss = npc.boss
+					|| NPCID.Sets.ShouldBeCountedAsBoss[npc.type]
+					|| (npc.realLife >= 0 && npc.realLife < Main.maxNPCs && Main.npc[npc.realLife].active
+						&& (Main.npc[npc.realLife].boss || NPCID.Sets.ShouldBeCountedAsBoss[Main.npc[npc.realLife].type]));
+				if (!isBoss)
+					continue;
+
+				float dSq = Vector2.DistanceSquared(origin, npc.Center);
+				if (dSq < bestDistSq)
+				{
+					bestDistSq = dSq;
+					best = npc;
+				}
+			}
+
+			return best;
 		}
 
 		private static bool IsValidCrowdControlTarget(NPC npc)
@@ -201,8 +252,8 @@ namespace WeepForTheDeparted.Content.Projectiles.Charms
 		private void StrikePortalTarget(NPC npc, NaughtPlayer naughtPlayer, Vector2 hitPos)
 		{
 			int strikeDamage = naughtPlayer != null
-				? naughtPlayer.GetNaughtDamage(DamageMultiplier)
-				: Math.Max(1, (int)MathF.Round(Projectile.damage * DamageMultiplier));
+				? naughtPlayer.GetNaughtDamage(WeepBalance.Active.VoidHorizonDamageMult)
+				: Math.Max(1, Projectile.damage);
 
 			if (naughtPlayer != null)
 			{
@@ -239,17 +290,20 @@ namespace WeepForTheDeparted.Content.Projectiles.Charms
 			SpriteBatch sb = Main.spriteBatch;
 			SpriteBatchState sbState = sb.Capture();
 
-			if (!DrawPortalShaderQuad(sb, in sbState, drawCenter, openScale, fade))
+			float damageRadius = WeepBalance.Active.VoidHorizonRadiusPx;
+			float quadHalfSize = damageRadius * QuadToRadiusRatio;
+
+			if (!DrawPortalShaderQuad(sb, in sbState, drawCenter, openScale, fade, quadHalfSize))
 			{
 				Vector2 screenCenter = drawCenter - Main.screenPosition;
-				NihilityLedgerTheme.DrawCircle(sb, screenCenter, DamageRadius * openScale, new Color(185, 45, 255) * (0.65f * fade), 2.5f);
-				NihilityLedgerTheme.DrawCircle(sb, screenCenter, DamageRadius * 0.65f * openScale, new Color(238, 26, 56) * (0.8f * fade), 2f);
+				NihilityLedgerTheme.DrawCircle(sb, screenCenter, damageRadius * openScale, new Color(185, 45, 255) * (0.65f * fade), 2.5f);
+				NihilityLedgerTheme.DrawCircle(sb, screenCenter, damageRadius * 0.65f * openScale, new Color(238, 26, 56) * (0.8f * fade), 2f);
 			}
 
 			return false;
 		}
 
-		private bool DrawPortalShaderQuad(SpriteBatch sb, in SpriteBatchState sbState, Vector2 worldCenter, float openScale, float fade)
+		private bool DrawPortalShaderQuad(SpriteBatch sb, in SpriteBatchState sbState, Vector2 worldCenter, float openScale, float fade, float quadHalfSize)
 		{
 			Effect fx = ShaderLoader.VoidHorizonShader;
 			Texture2D noise = ModContent.Request<Texture2D>("WeepForTheDeparted/Content/Projectiles/RiftNoise", AssetRequestMode.ImmediateLoad).Value;
@@ -281,8 +335,8 @@ namespace WeepForTheDeparted.Content.Projectiles.Charms
 
 			float cosR = (float)Math.Cos(portalRotation);
 			float sinR = (float)Math.Sin(portalRotation);
-			Vector2 right = new Vector2(cosR, sinR) * QuadHalfSize;
-			Vector2 down = new Vector2(-sinR, cosR) * QuadHalfSize;
+			Vector2 right = new Vector2(cosR, sinR) * quadHalfSize;
+			Vector2 down = new Vector2(-sinR, cosR) * quadHalfSize;
 
 			Vector2 pTL = worldCenter - right - down;
 			Vector2 pTR = worldCenter + right - down;

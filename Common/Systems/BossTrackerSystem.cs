@@ -17,6 +17,14 @@ namespace WeepForTheDeparted.Common.Systems
 		public static HashSet<string> DefeatedBosses { get; private set; } = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 		public static bool DefeatedPostMoonLordBoss { get; private set; } = false;
 
+		private static bool calamityStageFieldsInitialized = false;
+		private static FieldInfo downedProvidenceField;
+		private static FieldInfo downedPolterghastField;
+		private static FieldInfo downedDoGField;
+		private static FieldInfo downedYharonField;
+		private static FieldInfo downedExoMechsField;
+		private static FieldInfo downedCalamitasField;
+
 		private static readonly string[] CalamityPostMoonLordFlags =
 		{
 			"downedGuardians",
@@ -274,6 +282,128 @@ namespace WeepForTheDeparted.Common.Systems
 			int bossCount = GetTotalBossesDefeated();
 			float perBoss = WeepConfig.Instance?.CritPerBoss ?? 0.4f;
 			return Math.Max(0f, bossCount * perBoss);
+		}
+
+		private static void EnsureCalamityStageFields()
+		{
+			if (calamityStageFieldsInitialized)
+				return;
+
+			calamityStageFieldsInitialized = true;
+
+			if (!ModLoader.TryGetMod("CalamityMod", out Mod calamity))
+				return;
+
+			try
+			{
+				Type downedSystem = calamity.Code?.GetType("CalamityMod.DownedBossSystem");
+				if (downedSystem == null)
+					return;
+
+				const BindingFlags flags = BindingFlags.Public | BindingFlags.Static;
+				downedProvidenceField = downedSystem.GetField("downedProvidence", flags);
+				downedPolterghastField = downedSystem.GetField("downedPolterghast", flags);
+				downedDoGField = downedSystem.GetField("downedDoG", flags);
+				downedYharonField = downedSystem.GetField("downedYharon", flags);
+				downedExoMechsField = downedSystem.GetField("downedExoMechs", flags);
+				downedCalamitasField = downedSystem.GetField("downedCalamitas", flags);
+			}
+			catch
+			{
+				// Fail silently if Calamity internal structure differs
+			}
+		}
+
+		private static bool IsCalamityBossDowned(FieldInfo field)
+		{
+			if (field == null || field.FieldType != typeof(bool))
+				return false;
+
+			try
+			{
+				return field.GetValue(null) is bool isDowned && isDowned;
+			}
+			catch
+			{
+				return false;
+			}
+		}
+
+		/// <summary>
+		/// Returns the highest unlocked progression stage multiplier for Calamity scaling.
+		/// Safely returns Vanilla progression tiers (or 1.00f pre-HM) if CalamityMod is not loaded.
+		/// </summary>
+		public static float GetCalamityPostMLStageMultiplier()
+		{
+			EnsureCalamityStageFields();
+
+			if (IsCalamityBossDowned(downedExoMechsField) || IsCalamityBossDowned(downedCalamitasField))
+				return 9.50f;
+			if (IsCalamityBossDowned(downedYharonField))
+				return 6.20f;
+			if (IsCalamityBossDowned(downedDoGField))
+				return 4.50f;
+			if (IsCalamityBossDowned(downedPolterghastField))
+				return 3.20f;
+			if (IsCalamityBossDowned(downedProvidenceField))
+				return 2.00f;
+			if (NPC.downedMoonlord)
+				return 1.35f;
+			if (NPC.downedGolemBoss)
+				return 1.15f;
+			if (Main.hardMode)
+				return 1.05f;
+
+			return 1.00f;
+		}
+
+		/// <summary>
+		/// Returns Naught's effective total base sword damage for the active balance profile
+		/// (including Calamity stage multiplier when enabled), or manual slider override when configured.
+		/// </summary>
+		public static float GetEffectiveBaseDamage()
+		{
+			int bossCount = GetTotalBossesDefeated();
+			WeepConfig cfg = WeepConfig.Instance;
+			if (cfg?.OverrideWeaponScaling == true)
+			{
+				return Math.Max(1f, cfg.BaseSwordDamage + bossCount * Math.Max(0f, cfg.DamagePerBoss));
+			}
+
+			NaughtBalanceProfile profile = WeepBalance.Active;
+			float raw = profile.BaseSwordDamage + bossCount * profile.DamagePerBoss;
+			if (profile.UseCalamityStageMultiplier)
+			{
+				raw *= GetCalamityPostMLStageMultiplier();
+			}
+
+			return Math.Max(1f, raw);
+		}
+
+		/// <summary>
+		/// Returns Naught's effective bonus critical strike chance (%) from defeated bosses
+		/// for the active balance profile, or manual slider override when configured.
+		/// </summary>
+		public static float GetEffectiveBonusCrit()
+		{
+			int bossCount = GetTotalBossesDefeated();
+			WeepConfig cfg = WeepConfig.Instance;
+			float perBoss = cfg?.OverrideWeaponScaling == true
+				? cfg.CritPerBoss
+				: WeepBalance.Active.CritPerBoss;
+
+			return Math.Max(0f, bossCount * perBoss);
+		}
+
+		public override void Unload()
+		{
+			calamityStageFieldsInitialized = false;
+			downedProvidenceField = null;
+			downedPolterghastField = null;
+			downedDoGField = null;
+			downedYharonField = null;
+			downedExoMechsField = null;
+			downedCalamitasField = null;
 		}
 
 		public static string GetProgressionStageName()

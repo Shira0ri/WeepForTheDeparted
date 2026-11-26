@@ -69,13 +69,15 @@ namespace WeepForTheDeparted.Content.Projectiles
 			_ => MathHelper.ToRadians(270f)  // Massive overhead execution cleave
 		};
 
-		private float BladeReach => ComboStep switch
+		private float BladeReach
 		{
-			0 => 140f,
-			1 => 146f,
-			2 => 150f,
-			_ => 180f
-		};
+			get
+			{
+				var reaches = WeepBalance.Active.ComboBaseReachPx;
+				int step = Math.Clamp(ComboStep, 0, reaches.Length - 1);
+				return reaches[step];
+			}
+		}
 
 		public override void SetDefaults()
 		{
@@ -344,7 +346,7 @@ namespace WeepForTheDeparted.Content.Projectiles
 			Vector2 aimDir = beatAimAngle.ToRotationVector2();
 			Vector2 spawnPos = Owner.MountedCenter + aimDir * 32f;
 			Vector2 waveVel = aimDir * NaughtExWave.InitialSpeed;
-			int waveDamage = naughtPlayer.GetNaughtDamage(0.45f);
+			int waveDamage = naughtPlayer.GetNaughtDamage(NaughtExWave.DamageMult);
 
 			Projectile waveProj = Projectile.NewProjectileDirect(
 				Projectile.GetSource_FromThis(),

@@ -74,6 +74,7 @@ namespace WeepForTheDeparted.Content.Projectiles
 			Projectile.ownerHitCheck = true;
 			Projectile.DamageType = WeepCompatibility.TrueMelee;
 			Projectile.timeLeft = 18;
+			SlashRadius = WeepBalance.Active.ComboBaseReachPx[0] * 1.10f * 0.85f;
 		}
 
 		public void InitArc(Vector2 center, float angle, float radius, float span, int direction, int duration, Vector3 hot, Vector3 bright, Vector3 deep, Vector3 dark, int parentWhoAmI)

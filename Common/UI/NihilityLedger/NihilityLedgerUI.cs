@@ -349,18 +349,184 @@ namespace WeepForTheDeparted.Common.UI.NihilityLedger
 			}
 		};
 
+		private static int ToPercent(float ratio) => (int)MathF.Round(ratio * 100f);
+
+		private static string FormatSeconds(int ticks)
+		{
+			float seconds = ticks / 60f;
+			if (ticks % 60 == 0)
+				return ((int)seconds).ToString();
+			if (ticks % 6 == 0)
+				return seconds.ToString("0.#");
+			return seconds.ToString("0.##");
+		}
+
+		private static string FormatUpdatesSeconds(int updates) => (updates / 120f).ToString("0.##");
+
+		private static string FormatTiles(float pixels) => (pixels / 16f).ToString("0.##");
+
 		private static string GetCharmDescription(in CharmInfo charm)
 		{
-			if (charm.Key == "AbyssGrip")
-			{
-				NaughtPlayer.GetAbyssGripScaling(out float perDebuff, out int maxDebuffs);
-				int perPct = (int)MathF.Round(perDebuff * 100f);
-				int maxPct = perPct * maxDebuffs;
-				string activeLabel = WeepCompatibility.IsCalamityBalanceActive ? "Calamity" : "Vanilla";
-				return $"Naught hits inflict [Grip of the Abyss]: each unique debuff increases True Melee DMG received by +{perPct}% (up to +{maxPct}%, {maxDebuffs} max).\n[Active: {activeLabel} · Counts across all active boss segments]";
-			}
+			NaughtBalanceProfile p = WeepBalance.Active;
+			bool calamityActive = WeepCompatibility.IsCalamityBalanceActive;
 
-			return charm.Description;
+			switch (charm.Key)
+			{
+				// Soul Inscriptions (Slot 0)
+				case "RedOni":
+					return $"Begin each boss encounter with at least {p.RedOniOpenerFloor} Slashed Dream & {p.RedOniOpenerFloor} Crimson Knots on the strongest foe (once per encounter).\n" +
+						$"Gain +{p.RedOniMilestoneDream} Slashed Dream each time a boss crosses 75%, 50%, and 25% HP.";
+
+				case "NamelessDecoy":
+					return $"Each expiring shadow clone adds +1 extra cycle slash (up to +{p.NamelessDecoyBonusSlashCap} bonus, 50% True Melee DMG; basekit: 4) and grants +1 bonus Crimson Knot per cycle.";
+
+				case "FleetingStep":
+				{
+					int cdReducePct = ToPercent(1f - p.FleetingStepDashCdMult);
+					float cdSec = p.DashCooldownTicks * p.FleetingStepDashCdMult / 60f;
+					string slowSec = FormatSeconds(p.FleetingStepSlowTicks);
+					string icdSec = FormatSeconds(p.FleetingStepCooldownTicks);
+					return $"Flash Step cooldown reduced by {cdReducePct}% ({cdSec:0.##}s). Dashing through enemies restores 1 Slashed Dream and slows hostile projectiles by 50% for {slowSec}s ({icdSec}s cd).";
+				}
+
+				case "MirageWeft":
+				{
+					int cdReducePct = ToPercent(1f - p.MirageWeftDashCdMult);
+					float cdSec = p.DashCooldownTicks * p.MirageWeftDashCdMult / 60f;
+					int threadDmgPct = ToPercent(p.MirageWeftDamageMult);
+					string hitCdSec = FormatSeconds(p.MirageWeftHitCooldownTicks);
+					return $"Flash Step cooldown reduced by {cdReducePct}% ({cdSec:0.##}s). Active clones link in a chain to you via cutting threads dealing {threadDmgPct}% True Melee damage every {hitCdSec}s.";
+				}
+
+				case "Rainleaf":
+				{
+					string lethalClause = p.RainleafLethalHpRatio > 0f
+						? $"surviving lethal hits at {ToPercent(p.RainleafLethalHpRatio)}% max HP"
+						: "surviving lethal hits at 1 HP";
+					string invulnSec = FormatSeconds(p.RainleafInvulnTicks);
+					int speedPct = ToPercent(p.RainleafSpeedMult - 1f);
+					string cdSec = FormatSeconds(p.RainleafCooldownTicks);
+					return $"Dropping below 25% HP or {lethalClause} triggers {invulnSec}s Void Phasing (invulnerable, +{speedPct}% speed) and grants +{p.RainleafDreamGrant} Slashed Dream ({cdSec}s cooldown).";
+				}
+
+				case "StillWater":
+					return $"Holding Naught without taking damage for 15s grants [Still Water]:\n" +
+						$"+{(int)MathF.Round(p.StillWaterCritChance)}% True Melee Crit Chance and +{ToPercent(p.StillWaterCritDamage)}% Crit Damage.";
+
+				// Tide Inscriptions (Slot 1)
+				case "AbyssGrip":
+				{
+					int perPct = ToPercent(p.AbyssGripPerDebuff);
+					int maxPct = perPct * p.AbyssGripMaxDebuffs;
+					string activeLabel = calamityActive ? "Calamity" : "Vanilla";
+					return $"Naught hits inflict [Grip of the Abyss]: each unique debuff increases True Melee DMG received by +{perPct}% (up to +{maxPct}%, {p.AbyssGripMaxDebuffs} max).\n" +
+						$"[Active: {activeLabel} · Counts across all active boss segments]";
+				}
+
+				case "BloodLotus":
+					return $"Upon target death, Crimson Knots transfer to 2 enemies (<9 stacks preferred) and erupt in a {FormatTiles(p.BloodLotusMaxRadiusPx)}-tile Blood Lotus Shockwave ({ToPercent(p.BloodLotusBaseMult)}% + {ToPercent(p.BloodLotusKnotMult)}%/knot True Melee DMG, {FormatSeconds(p.BloodLotusGlobalHitCooldownTicks)}s global hit CD).";
+
+				case "ShadowMarionette":
+					return $"Clones last indefinitely (max 4, 15s pulse) and tether up to 3 enemies, slowing non-bosses and sharing debuffs & {ToPercent(p.MarionetteSharePerClone)}%/clone True Melee DMG (up to {ToPercent(p.MarionetteShareCap)}%; {ToPercent(p.MarionetteUltShareScale)}% on Ultimate strikes).";
+
+				case "WitheredRiver":
+				{
+					int durPct = ToPercent(p.WitheredRiverBossDurationMult - 1f);
+					if (calamityActive)
+					{
+						int peelPct = ToPercent(p.WitheredRiverDrPeel);
+						return $"Debuffs inflicted on boss enemies last {durPct}% longer.\n" +
+							$"Naught hits inflict [Withered River], peeling enemy Damage Reduction by {peelPct}% (converted to +{peelPct}% DMG on 0% DR targets).";
+					}
+					int vanillaPct = ToPercent(p.WitheredRiverVanillaDamageMult - 1f);
+					return $"Debuffs inflicted on boss enemies last {durPct}% longer.\n" +
+						$"Naught hits inflict [Withered River], increasing all damage taken by +{vanillaPct}% (also peels {ToPercent(p.WitheredRiverDrPeel)}% DR).";
+				}
+
+				case "ShadowCrucible":
+					return $"Clones project an 18-tile aura: DoTs deal {p.CrucibleDotAmps[0]:0.##}x/{p.CrucibleDotAmps[1]:0.##}x/{p.CrucibleDotAmps[2]:0.##}x DMG (1-3 overlaps) and brand foes with [Shadow Crucible], detonating {ToPercent(p.CruciblePopRatio)}% stored DoT on cycle expiry (min {ToPercent(p.CrucibleFloorPerDebuff)}%/debuff, cap {ToPercent(p.CrucibleWeaponCapMult)}% weapon / {ToPercent(p.CrucibleBossHpCapRatio)}% boss HP).";
+
+				case "DepartedSiphon":
+				{
+					float healPerKnotPct = p.SiphonHealPerKnot * 100f;
+					float maxHealPct = healPerKnotPct * 9f;
+					return $"Detonating Crimson Knots during Ultimate heals {healPerKnotPct:0.#}% max HP per knot (up to {maxHealPct:0.#}% per Ult) and grants +15% movement speed for 8s after Ult.";
+				}
+
+				// Ruin Inscriptions (Slot 2)
+				case "ThunderCore":
+					return $"After Ultimate ends, gain +{ToPercent(p.ThunderCoreBuffDamage)}% True Melee damage for {FormatSeconds(p.ThunderCoreBuffTicks)}s and call down 9 staggered guaranteed-crit thunderbolts every 0.3s ({ToPercent(p.ThunderCoreBoltMult)}% DMG each, max +1 Dream/Knot).";
+
+				case "KarmaSever":
+				{
+					int defPenPct = ToPercent(p.KarmaSeverUltDefPen);
+					int resurgePct = ToPercent(p.KarmaSeverResurgeBonusMult - 1f);
+					int e6ScalePct = ToPercent(p.KarmaSeverE6Scale);
+					if (calamityActive)
+					{
+						int peelPct = ToPercent(p.KarmaSeverBossDrPeel);
+						float e6PeelPct = p.KarmaSeverBossDrPeel * p.KarmaSeverE6Scale * 100f;
+						return $"All Ultimate strikes ignore {defPenPct}% enemy defense and peel {peelPct}% boss DR (E6 swings: {e6ScalePct}% / {e6PeelPct:0.#}% peel).\n" +
+							$"Stygian Resurge gains +{resurgePct}% bonus DMG.";
+					}
+					int bossPct = ToPercent(p.KarmaSeverVanillaBossMult - 1f);
+					float e6BossPct = (p.KarmaSeverVanillaBossMult - 1f) * p.KarmaSeverE6Scale * 100f;
+					return $"All Ultimate strikes ignore {defPenPct}% enemy defense and deal +{bossPct}% boss DMG (E6 swings: +{e6BossPct:0.#}%).\n" +
+						$"Stygian Resurge gains +{resurgePct}% bonus DMG.";
+				}
+
+				case "VoidHorizon":
+				{
+					string driftNote = p.VoidHorizonFallbackDriftSpeed > 0f
+						? $" Fallback portal drifts toward bosses ({(p.VoidHorizonFallbackDriftSpeed * 60f / 16f):0.#} tiles/s)."
+						: string.Empty;
+					return $"Stygian Resurge opens 9s Void Fissures ({FormatTiles(p.VoidHorizonRadiusPx)}-tile radius) on active clones (or target), pulling non-bosses and dealing {ToPercent(p.VoidHorizonDamageMult)}% True Melee DMG every 0.4s.{driftNote}";
+				}
+
+				case "BladesongRain":
+					return $"Rainblades execute 35% faster. Detonated knots fan out Blood Blossom Needles ({ToPercent(p.BladesongNeedleMult)}% True Melee DMG, {FormatUpdatesSeconds(p.BladesongFlightUpdates)}s flight, max {p.BladesongMaxHitsPerNpc} hits/enemy at {FormatUpdatesSeconds(p.BladesongHitCooldownUpdates)}s CD) piercing infinitely through crowds.";
+
+				case "SynchronizedExecution":
+					return $"Clones pause expiry during Ult, mirroring Rainblades ({ToPercent(p.SyncMirrorRainbladeMult)}% DMG) and converging in a {ToPercent(p.SyncCrossSlashMult)}% crit cross-slash before fading (full DMG up to 3 clones; soft-capped at {p.SyncSoftCapClones:0.#}).";
+
+				case "EmancipatorWill":
+					return $"Refunds 1 Slashed Dream per 3 Crimson Knots detonated in Ult (up to +{p.EmancipatorMaxDreamRefund} Dream, overflows into Overflow Dream).\n" +
+						$"Grants +{(int)MathF.Round(p.EmancipatorCritBonus)}% True Melee Crit Chance for 10s after regaining control.";
+
+				default:
+					return charm.Description;
+			}
+		}
+
+		private static string GetEidolonDescription(in EidolonInfo eidolon)
+		{
+			NaughtBalanceProfile p = WeepBalance.Active;
+			bool calamityActive = WeepCompatibility.IsCalamityBalanceActive;
+
+			switch (eidolon.Index)
+			{
+				case 0:
+					return $"True Melee hits against debuffed enemies gain +{(int)MathF.Round(p.E1CritBonus)}% Crit Chance.";
+				case 1:
+					return $"While wielding Naught in combat, passively generates +1 Slashed Dream every {FormatSeconds(p.E2PassiveDreamIntervalTicks)}s.";
+				case 2:
+					return $"Rainblade base damage increased to {p.E3RainbladeBaseMult:0.00}x (+{p.E3RainbladeKnotMult:0.00}x per knot). Odachi combo reach increased by +15%.";
+				case 3:
+					return "Enemies within Nihility Domain take +8% increased Ultimate damage.";
+				case 4:
+					return $"Stygian Resurge damage increased to {p.E5ResurgeBaseMult:0.00}x (+{p.E5ResurgeKnotMult:0.00}x per knot). Overflow Dream cap raised to 5; Clone Cycle slashes deal 55% damage.";
+				case 5:
+				{
+					string sevNote = calamityActive
+						? $"{(p.KarmaSeverBossDrPeel * p.KarmaSeverE6Scale * 100f):0.#}% Severance boss DR peel"
+						: $"+{((p.KarmaSeverVanillaBossMult - 1f) * p.KarmaSeverE6Scale * 100f):0.#}% Severance boss DMG";
+					return $"Odachi combos, Clone Cycle slashes, and EX waves inherit Ultimate status (full E4 +8%, {ToPercent(p.KarmaSeverE6Scale)}% Severance: {sevNote}). Base Clone Cycle volley gains +1 slash.";
+				}
+				case 6:
+					return $"Odachi combo reach increased by an additional +15%. Every combo slash launches a {ToPercent(p.ExWaveDamageMult)}% crimson spatial wave that cannot double-hit enemies struck by the blade.";
+				default:
+					return eidolon.Description;
+			}
 		}
 
 		private static List<string> WrapText(DynamicSpriteFont font, string text, float maxWidth, float scale)
@@ -1169,14 +1335,29 @@ namespace WeepForTheDeparted.Common.UI.NihilityLedger
 			Vector2 subPos = new Vector2(boardRect.X + 24, boardRect.Y + 44);
 			sb.DrawString(fontText, subStr, subPos, NihilityLedgerTheme.TextDim * alpha, 0f, Vector2.Zero, 0.85f, SpriteEffects.None, 0f);
 
-			if (ModContent.GetInstance<WeepConfig>()?.UnlockAllInscriptionsAndEidolons == true)
+			bool sandboxUnsealed = ModContent.GetInstance<WeepConfig>()?.UnlockAllInscriptionsAndEidolons == true;
+			bool calamityActive = WeepCompatibility.IsCalamityBalanceActive;
+			string profileTag = calamityActive ? "[CALAMITY PROFILE]" : "[VANILLA PROFILE]";
+			Color profileColor = calamityActive ? NihilityLedgerTheme.AcheronScarlet : NihilityLedgerTheme.VioletGlow;
+
+			int rightTagX = closeButtonRect.X - 12;
+
+			if (sandboxUnsealed)
 			{
 				const string sandboxTag = "[SANDBOX UNSEALED]";
 				Vector2 tagSize = fontText.MeasureString(sandboxTag) * 0.78f;
-				Rectangle tagRect = new Rectangle(closeButtonRect.X - (int)tagSize.X - 28, boardRect.Y + 20, (int)tagSize.X + 16, 26);
+				int tagBoxW = (int)tagSize.X + 16;
+				Rectangle tagRect = new Rectangle(rightTagX - tagBoxW, boardRect.Y + 20, tagBoxW, 26);
 				NihilityLedgerTheme.DrawBeveledBox(sb, tagRect, NihilityLedgerTheme.LacquerBlack * (0.9f * alpha), NihilityLedgerTheme.LacquerGold * alpha, 1.5f);
 				sb.DrawString(fontText, sandboxTag, new Vector2(tagRect.X + 8, tagRect.Y + 4), NihilityLedgerTheme.LacquerGold * alpha, 0f, Vector2.Zero, 0.78f, SpriteEffects.None, 0f);
+				rightTagX = tagRect.X - 8;
 			}
+
+			Vector2 profileSize = fontText.MeasureString(profileTag) * 0.78f;
+			int profileBoxW = (int)profileSize.X + 16;
+			Rectangle profileRect = new Rectangle(rightTagX - profileBoxW, boardRect.Y + 20, profileBoxW, 26);
+			NihilityLedgerTheme.DrawBeveledBox(sb, profileRect, NihilityLedgerTheme.LacquerBlack * (0.9f * alpha), profileColor * alpha, 1.5f);
+			sb.DrawString(fontText, profileTag, new Vector2(profileRect.X + 8, profileRect.Y + 4), profileColor * alpha, 0f, Vector2.Zero, 0.78f, SpriteEffects.None, 0f);
 
 			// Dividing crimson tapered slash line
 			Vector2 lineStart = new Vector2(boardRect.X + 20, boardRect.Y + 70);
@@ -1837,7 +2018,7 @@ namespace WeepForTheDeparted.Common.UI.NihilityLedger
 				bool act = player.IsEidolonActive(HoveredEidolon);
 				title = $"{e.RomanNumeral} · {e.Title}";
 				sub = e.Subtitle + (!unl ? " [Sealed]" : (act ? " [Active]" : " [Disabled]"));
-				desc = e.Description;
+				desc = GetEidolonDescription(in e);
 				lore = e.Lore;
 				hint = !unl
 					? BossTrackerSystem.GetEidolonUnlockHint(HoveredEidolon)

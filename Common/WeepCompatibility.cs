@@ -111,9 +111,11 @@ namespace WeepForTheDeparted.Common
 		public static float GetCalamityNPCDR(NPC npc) => TryGetCalamityNPCDR(npc, out float dr) ? dr : 0f;
 
 		/// <summary>
-		/// Computes the final-damage multiplier for a single-pass DR peel of <paramref name="totalPeel"/>.
+		/// Computes the final-damage multiplier for a single-pass DR peel of any positive <paramref name="totalPeel"/>
+		/// (e.g. 0.10f, 0.12f, 0.14f, 0.15f, 0.16f, 0.22f, 0.29f).
 		/// Skips DR peel if Calamity DR &gt; 0.90f (anti-cheese phase shields), peels up to <paramref name="totalPeel"/>
-		/// off positive Calamity DR, and converts any unspent remainder into multiplicative bonus damage.
+		/// off positive Calamity DR, and converts any unspent remainder (and all 0%-DR or Vanilla targets) cleanly
+		/// into multiplicative bonus damage (<c>1f + totalPeel</c> on 0%-DR/Vanilla).
 		/// </summary>
 		public static float ComputeUnifiedDRPeelMultiplier(NPC target, float totalPeel)
 		{

@@ -8,6 +8,7 @@ using ReLogic.Graphics;
 using Terraria;
 using Terraria.GameContent;
 using Terraria.ModLoader;
+using WeepForTheDeparted.Common;
 using WeepForTheDeparted.Common.Players;
 using WeepForTheDeparted.Common.UI.NihilityLedger;
 using WeepForTheDeparted.Content.Items.Weapons;
@@ -144,6 +145,9 @@ namespace WeepForTheDeparted.Common.UI
 
 			Vector2 anchor = NaturalAnchor;
 			bool isPrimed = naughtPlayer.SlashedDream >= NaughtPlayer.MaxSlashedDream;
+			int recastCooldown = naughtPlayer.UltimateRecastCooldown;
+			bool onRecastCooldown = recastCooldown > 0;
+			bool isReady = isPrimed && !onRecastCooldown;
 			float pulseTimer = GlobalTimer * 3.5f;
 
 			// Request 9-petal individual flower components
@@ -158,8 +162,8 @@ namespace WeepForTheDeparted.Common.UI
 			Vector2 origin = new Vector2(128f, 128f);
 			float baseScale = 0.36f;
 
-			// Overall flower pulse when primed
-			float flowerPulse = isPrimed ? (float)Math.Sin(pulseTimer * 4f) * 0.04f : 0f;
+			// Overall flower pulse when primed and ready (suppressed during post-Ultimate recast gate)
+			float flowerPulse = isReady ? (float)Math.Sin(pulseTimer * 4f) * 0.04f : 0f;
 			float scale = (baseScale + flowerPulse) * MathHelper.Lerp(0.85f, 1f, alpha);
 
 			// 1. Draw all 9 Petals (clockwise starting from top petal at 12 o'clock)
@@ -175,7 +179,7 @@ namespace WeepForTheDeparted.Common.UI
 					Color baseColor = Color.Lerp(new Color(215, 115, 255), new Color(255, 30, 45), t);
 
 					// Dynamic traveling wave moving clockwise
-					float pulseSpeed = isPrimed ? 5.5f : 4.0f;
+					float pulseSpeed = isReady ? 5.5f : 4.0f;
 					float pulsePhase = pulseTimer * pulseSpeed - i * 0.65f;
 
 					// Pronounced pulse amplitude
@@ -198,10 +202,14 @@ namespace WeepForTheDeparted.Common.UI
 						petalColor = Color.Lerp(petalColor, new Color(255, 140, 160), flare * 0.5f);
 					}
 
-					if (isPrimed)
+					if (isReady)
 					{
 						float primeFlash = (float)Math.Sin(pulseTimer * 6f + i * 0.7f) * 0.35f + 0.35f;
 						petalColor = Color.Lerp(petalColor, Color.White, primeFlash);
+					}
+					else if (onRecastCooldown)
+					{
+						petalColor = Color.Lerp(petalColor, new Color(65, 55, 75), 0.45f);
 					}
 
 					// Draw petal
@@ -211,7 +219,7 @@ namespace WeepForTheDeparted.Common.UI
 				{
 					// Unlit Petal: crisp white/silver slot with gentle breathing pulse
 					float unlitPulse = (float)Math.Sin(pulseTimer * 2f + i * 0.35f) * 0.02f + 0.98f;
-					Color unlitColor = Color.White * (alpha * 0.78f);
+					Color unlitColor = Color.White * (alpha * (onRecastCooldown ? 0.58f : 0.78f));
 					spriteBatch.Draw(texUnlit, anchor, null, unlitColor, rot, origin, scale * unlitPulse, SpriteEffects.None, 0f);
 				}
 			}
@@ -220,18 +228,31 @@ namespace WeepForTheDeparted.Common.UI
 			if (texCenter != null)
 			{
 				float corePulse = (float)Math.Sin(pulseTimer * 3f) * 0.03f + 0.98f;
-				Color coreColor = isPrimed
+				Color coreColor = isReady
 					? Color.Lerp(Color.White, new Color(255, 100, 130), (float)Math.Sin(pulseTimer * 5f) * 0.35f + 0.35f)
-					: Color.White;
+					: (onRecastCooldown ? new Color(165, 150, 175) : Color.White);
 
 				spriteBatch.Draw(texCenter, anchor, null, coreColor * alpha, 0f, origin, scale * corePulse, SpriteEffects.None, 0f);
 			}
 
-			// 3. Draw Awakened Lightning Ring when Primed (9/9)
+			// 3. Draw Awakened Lightning Ring when Primed & Ready (dimmed during recast cooldown)
 			if (isPrimed && texAwakened != null)
 			{
-				float awkPulse = (float)Math.Sin(pulseTimer * 5f) * 0.25f + 0.75f;
-				spriteBatch.Draw(texAwakened, anchor, null, Color.White * (alpha * awkPulse), 0f, origin, scale * 1.05f, SpriteEffects.None, 0f);
+				if (isReady)
+				{
+					float awkPulse = (float)Math.Sin(pulseTimer * 5f) * 0.25f + 0.75f;
+					spriteBatch.Draw(texAwakened, anchor, null, Color.White * (alpha * awkPulse), 0f, origin, scale * 1.05f, SpriteEffects.None, 0f);
+				}
+				else
+				{
+					spriteBatch.Draw(texAwakened, anchor, null, new Color(145, 125, 160) * (alpha * 0.22f), 0f, origin, scale * 1.02f, SpriteEffects.None, 0f);
+				}
+			}
+
+			// 3b. Draw subtle post-Ultimate recast cooldown timer centered on the flower core
+			if (onRecastCooldown)
+			{
+				DrawRecastCooldownTimer(spriteBatch, anchor, alpha, recastCooldown);
 			}
 
 			// 4. Draw Overflow Number (if overflow charges exist)
@@ -241,13 +262,26 @@ namespace WeepForTheDeparted.Common.UI
 			}
 
 			// 5. Draw Status & Text
-			DrawStatusText(spriteBatch, anchor, alpha, naughtPlayer, isPrimed, pulseTimer);
+			DrawStatusText(spriteBatch, anchor, alpha, naughtPlayer, isPrimed, isReady, onRecastCooldown, pulseTimer);
 
 			// 6. Handle Hover & Tooltip (suppressed while Nihility Ledger is open)
 			if (ledgerOcclusion <= 0.01f)
 			{
-				HandleHoverTooltip(anchor, naughtPlayer, isPrimed);
+				HandleHoverTooltip(anchor, naughtPlayer, isPrimed, recastCooldown);
 			}
+		}
+
+		private static void DrawRecastCooldownTimer(SpriteBatch spriteBatch, Vector2 anchor, float alpha, int recastCooldownTicks)
+		{
+			DynamicSpriteFont font = FontAssets.MouseText.Value;
+			if (font == null)
+				return;
+
+			string cdStr = $"{recastCooldownTicks / 60f:0.0}s";
+			Vector2 textSize = font.MeasureString(cdStr) * 0.85f;
+			Vector2 textPos = anchor - textSize * 0.5f + new Vector2(0f, 1f);
+			Color cdColor = new Color(225, 200, 235);
+			Utils.DrawBorderStringFourWay(spriteBatch, font, cdStr, textPos.X, textPos.Y, cdColor * alpha, Color.Black * (alpha * 0.95f), Vector2.Zero, 0.85f);
 		}
 
 		private void DrawOverflowNumber(SpriteBatch spriteBatch, Vector2 anchor, float alpha, int overflowCount, float pulseTimer)
@@ -264,7 +298,7 @@ namespace WeepForTheDeparted.Common.UI
 			Utils.DrawBorderStringFourWay(spriteBatch, font, overStr, textPos.X, textPos.Y, amberGold * alpha, Color.Black * alpha, Vector2.Zero, 0.85f);
 		}
 
-		private void DrawStatusText(SpriteBatch spriteBatch, Vector2 anchor, float alpha, NaughtPlayer naughtPlayer, bool isPrimed, float pulseTimer)
+		private void DrawStatusText(SpriteBatch spriteBatch, Vector2 anchor, float alpha, NaughtPlayer naughtPlayer, bool isPrimed, bool isReady, bool onRecastCooldown, float pulseTimer)
 		{
 			DynamicSpriteFont font = FontAssets.MouseText.Value;
 			if (font == null)
@@ -279,15 +313,16 @@ namespace WeepForTheDeparted.Common.UI
 			Vector2 countSize = font.MeasureString(countStr) * 0.82f;
 			Vector2 countPos = anchor + new Vector2(0f, 52f) - countSize * 0.5f;
 
-			Color textColor = isPrimed
+			Color textColor = isReady
 				? Color.Lerp(new Color(255, 60, 90), Color.White, (float)Math.Sin(pulseTimer * 5f) * 0.35f + 0.35f)
-				: new Color(215, 160, 255);
+				: (isPrimed && onRecastCooldown ? new Color(175, 130, 165) : new Color(215, 160, 255));
 
 			Utils.DrawBorderStringFourWay(spriteBatch, font, countStr, countPos.X, countPos.Y, textColor * alpha, Color.Black * (alpha * 0.9f), Vector2.Zero, 0.82f);
 
 			if (naughtPlayer.IsEmancipatorCritActive)
 			{
-				string critStr = $"+20% CRIT {naughtPlayer.EmancipatorCritBuffTimer / 60f:0.0}s";
+				int critBonus = (int)MathF.Round(WeepBalance.Active.EmancipatorCritBonus);
+				string critStr = $"+{critBonus}% CRIT {naughtPlayer.EmancipatorCritBuffTimer / 60f:0.0}s";
 				Vector2 critSize = font.MeasureString(critStr) * 0.72f;
 				Vector2 critPos = anchor + new Vector2(0f, 70f) - critSize * 0.5f;
 				Color critColor = Color.Lerp(new Color(255, 70, 95), new Color(255, 210, 100), (float)Math.Sin(pulseTimer * 6f) * 0.5f + 0.5f);
@@ -295,7 +330,7 @@ namespace WeepForTheDeparted.Common.UI
 			}
 		}
 
-		private void HandleHoverTooltip(Vector2 anchor, NaughtPlayer naughtPlayer, bool isPrimed)
+		private void HandleHoverTooltip(Vector2 anchor, NaughtPlayer naughtPlayer, bool isPrimed, int recastCooldownTicks)
 		{
 			Vector2 mouse = new Vector2(Main.mouseX, Main.mouseY);
 			Rectangle bounds = new Rectangle((int)anchor.X - 50, (int)anchor.Y - 50, 100, 100);
@@ -303,14 +338,31 @@ namespace WeepForTheDeparted.Common.UI
 			if (bounds.Contains(mouse.ToPoint()))
 			{
 				Main.LocalPlayer.mouseInterface = true;
+				bool onRecastCooldown = recastCooldownTicks > 0;
+				float recastSec = recastCooldownTicks / 60f;
 
-				string tooltip = isPrimed
-					? $"Slashed Dream: {naughtPlayer.SlashedDream}/9 [PRIMED]\nOverflow Charges: {naughtPlayer.OverflowDream}/{naughtPlayer.CurrentMaxOverflowDream}\nReady to unleash: Slashed Dream Cries in Red\nInflict debuffs or cycle clones to charge.\n[Click to open Nihility Ledger (Charms & Eidolons)]"
-					: $"Slashed Dream: {naughtPlayer.SlashedDream}/9\nOverflow Charges: {naughtPlayer.OverflowDream}/{naughtPlayer.CurrentMaxOverflowDream}\nReaches 9 to prime Ultimate.\nInflict debuffs or cycle clones to charge.\n[Click to open Nihility Ledger (Charms & Eidolons)]";
+				string tooltip;
+				if (isPrimed && onRecastCooldown)
+				{
+					tooltip = $"Slashed Dream: {naughtPlayer.SlashedDream}/9 [RECAST COOLDOWN: {recastSec:0.0}s]\nOverflow Charges: {naughtPlayer.OverflowDream}/{naughtPlayer.CurrentMaxOverflowDream}\nUltimate on post-cast cooldown ({recastSec:0.0}s remaining).\nInflict debuffs or cycle clones to charge.\n[Click to open Nihility Ledger (Charms & Eidolons)]";
+				}
+				else if (isPrimed)
+				{
+					tooltip = $"Slashed Dream: {naughtPlayer.SlashedDream}/9 [PRIMED]\nOverflow Charges: {naughtPlayer.OverflowDream}/{naughtPlayer.CurrentMaxOverflowDream}\nReady to unleash: Slashed Dream Cries in Red\nInflict debuffs or cycle clones to charge.\n[Click to open Nihility Ledger (Charms & Eidolons)]";
+				}
+				else
+				{
+					tooltip = $"Slashed Dream: {naughtPlayer.SlashedDream}/9\nOverflow Charges: {naughtPlayer.OverflowDream}/{naughtPlayer.CurrentMaxOverflowDream}\nReaches 9 to prime Ultimate.\nInflict debuffs or cycle clones to charge.\n[Click to open Nihility Ledger (Charms & Eidolons)]";
+					if (onRecastCooldown)
+					{
+						tooltip += $"\nUltimate Recast Cooldown: {recastSec:0.0}s";
+					}
+				}
 
 				if (naughtPlayer.IsEmancipatorCritActive)
 				{
-					tooltip += $"\nSevered Will: +20% True Melee Crit ({naughtPlayer.EmancipatorCritBuffTimer / 60f:0.0}s)";
+					int critBonus = (int)MathF.Round(WeepBalance.Active.EmancipatorCritBonus);
+					tooltip += $"\nSevered Will: +{critBonus}% True Melee Crit ({naughtPlayer.EmancipatorCritBuffTimer / 60f:0.0}s)";
 				}
 
 				Main.instance.MouseText(tooltip);

@@ -111,8 +111,8 @@ namespace WeepForTheDeparted.Common.Players
 		// Charm Dynamic Buff Timers & States
 		public int VoidPhasingTimer = 0;
 		public int VoidPhasingCooldown = 0;
-		public const int VoidPhasingDuration = 180; // 3.0 seconds
-		public const int VoidPhasingCooldownDuration = 5400; // 90 seconds
+		public static int VoidPhasingDuration => WeepBalance.Active.RainleafInvulnTicks;
+		public static int VoidPhasingCooldownDuration => WeepBalance.Active.RainleafCooldownTicks;
 		private int prevStatLife = -1;
 		public const int StillWaterFocusDuration = 900; // 15.0 seconds
 		public int StillWaterFocusTimer = 0;
@@ -133,6 +133,15 @@ namespace WeepForTheDeparted.Common.Players
 		public int FleetingStepDreamCooldown = 0;
 		public int FleetingStepSlowTimer = 0;
 		public bool IsFleetingStepSlowActive => HasFleetingStep && FleetingStepSlowTimer > 0;
+
+		// Global Debuff-to-Dream ICD & Post-Ultimate Recast Cooldown
+		public int GlobalDebuffDreamCooldown { get; set; } = 0;
+		public int UltimateRecastCooldown { get; set; } = 0;
+
+		// Mark of the Red Oni per-encounter boss opener guard
+		private bool redOniBossEncounterTriggered = false;
+		private int noBossAliveTicks = 0;
+		public const int RedOniEncounterResetTicks = 300; // 5.0s with no alive boss
 
 		private uint nextCloneSequence = 0;
 		public uint AllocateCloneSequence() => ++nextCloneSequence;
@@ -370,9 +379,9 @@ namespace WeepForTheDeparted.Common.Players
 		private bool isPropagatingMarionette = false;
 		public bool IsPropagatingMarionette => isPropagatingMarionette;
 
-		// E2 (Mute Thunder): passive +1 Slashed Dream every 9.0s while wielding Naught in combat
+		// E2 (Mute Thunder): passive +1 Slashed Dream while wielding Naught in combat
 		public const int E2CombatTimeoutTicks = 360;   // 6.0s
-		public const int E2SlashedDreamInterval = 540; // 9.0s
+		public static int E2SlashedDreamInterval => WeepBalance.Active.E2PassiveDreamIntervalTicks;
 		private int e2CombatActivityTimer = 0;
 		private int e2PassiveDreamTimer = 0;
 
@@ -424,8 +433,11 @@ namespace WeepForTheDeparted.Common.Players
 			}
 			else
 			{
-				int cfgBase = WeepConfig.Instance?.BaseSwordDamage ?? 25;
-				if (fallbackNaughtItem.damage != cfgBase)
+				WeepConfig cfg = WeepConfig.Instance;
+				int expectedBase = cfg?.OverrideWeaponScaling == true
+					? Math.Max(1, cfg.BaseSwordDamage)
+					: WeepBalance.Active.BaseSwordDamage;
+				if (fallbackNaughtItem.damage != expectedBase)
 				{
 					fallbackNaughtItem.SetDefaults(naughtType);
 				}
@@ -439,14 +451,15 @@ namespace WeepForTheDeparted.Common.Players
 		/// </summary>
 		/// <summary>
 		/// Diminishing-returns per-clone scale for Synchronized Execution:
-		/// 1-3 clones deal 100% per clone; 4+ clones smoothly approach a 5.0 effective-clone cap.
+		/// 1-3 clones deal 100% per clone; 4+ clones smoothly approach SyncSoftCapClones.
 		/// </summary>
 		public static float GetSynchronizedCloneScale(int participatingCloneCount)
 		{
 			if (participatingCloneCount <= 3)
 				return 1f;
 
-			float effectiveClones = 3f + 2f * (1f - MathF.Exp(-(participatingCloneCount - 3) / 4f));
+			float extraCap = WeepBalance.Active.SyncSoftCapClones - 3f;
+			float effectiveClones = 3f + extraCap * (1f - MathF.Exp(-(participatingCloneCount - 3f) / 4f));
 			return effectiveClones / participatingCloneCount;
 		}
 
@@ -509,6 +522,14 @@ namespace WeepForTheDeparted.Common.Players
 			ResetUltVisualAndCameraState(immediateCamera: true);
 			ClearPendingCycleVolley();
 			LastCloneCycleFrame = -1;
+			DashCooldown = 0;
+			GlobalDebuffDreamCooldown = 0;
+			UltimateRecastCooldown = 0;
+			FleetingStepDreamCooldown = 0;
+			ThunderCoreBuffTimer = 0;
+			debuffCooldowns.Clear();
+			redOniBossEncounterTriggered = false;
+			noBossAliveTicks = 0;
 			marionetteCycleTimer = 0;
 			FleetingStepSlowTimer = 0;
 			VoidPhasingTimer = 0;
@@ -532,6 +553,14 @@ namespace WeepForTheDeparted.Common.Players
 			ResetUltVisualAndCameraState(immediateCamera: true);
 			ClearPendingCycleVolley();
 			LastCloneCycleFrame = -1;
+			DashCooldown = 0;
+			GlobalDebuffDreamCooldown = 0;
+			UltimateRecastCooldown = 0;
+			FleetingStepDreamCooldown = 0;
+			ThunderCoreBuffTimer = 0;
+			debuffCooldowns.Clear();
+			redOniBossEncounterTriggered = false;
+			noBossAliveTicks = 0;
 			marionetteCycleTimer = 0;
 			FleetingStepSlowTimer = 0;
 			VoidPhasingTimer = 0;
@@ -594,19 +623,44 @@ namespace WeepForTheDeparted.Common.Players
 			}
 		}
 
+		public void StartUltimateRecastCooldown()
+		{
+			UltimateRecastCooldown = WeepBalance.Active.UltimateRecastCooldownTicks;
+		}
+
+		public bool CanTriggerRedOniBossEncounter() => !redOniBossEncounterTriggered;
+
+		public void MarkRedOniBossEncounterTriggered()
+		{
+			redOniBossEncounterTriggered = true;
+			noBossAliveTicks = 0;
+		}
+
+		private static bool IsAnyBossAliveInWorld()
+		{
+			for (int i = 0; i < Main.maxNPCs; i++)
+			{
+				NPC npc = Main.npc[i];
+				if (npc.active && npc.lifeMax > 5 && CrimsonKnotGlobalNPC.IsBossTarget(npc))
+					return true;
+			}
+			return false;
+		}
+
 		/// <summary>
-		/// Mark of the Red Oni opener: floors Slashed Dream to 5 and floors Crimson Knots on the highest-HP
-		/// valid target within 1800f px to 5 stacks.
+		/// Mark of the Red Oni opener: floors Slashed Dream and Crimson Knots on the highest-HP
+		/// valid target within 1800f px to RedOniOpenerFloor stacks.
 		/// </summary>
 		public void TryTriggerRedOniOpener(bool applyKnots = true)
 		{
 			if (Player.whoAmI != Main.myPlayer || Main.netMode == NetmodeID.Server || !HasRedOniTrace)
 				return;
 
+			int floor = WeepBalance.Active.RedOniOpenerFloor;
 			bool gainedDream = false;
-			if (SlashedDream < 5)
+			if (SlashedDream < floor)
 			{
-				SlashedDream = 5;
+				SlashedDream = floor;
 				gainedDream = true;
 			}
 
@@ -616,7 +670,7 @@ namespace WeepForTheDeparted.Common.Players
 				NPC target = FindHighestHpEnemy(Player.MountedCenter, 1800f, ignoreMaxedKnots: true);
 				if (target != null && target.TryGetGlobalNPC<CrimsonKnotGlobalNPC>(out var knotData))
 				{
-					int toAdd = Math.Max(0, 5 - knotData.CrimsonKnotStacks);
+					int toAdd = Math.Max(0, floor - knotData.CrimsonKnotStacks);
 					if (toAdd > 0)
 					{
 						CrimsonKnotGlobalNPC.AddKnot(target, toAdd, target.Center);
@@ -684,13 +738,13 @@ namespace WeepForTheDeparted.Common.Players
 			return base.CanBeHitByProjectile(proj);
 		}
 
-		private int GetRainleafThresholdHp() => Math.Max(1, (int)(Player.statLifeMax2 * 0.25f));
+		private int GetRainleafThresholdHp() => Math.Max(1, (int)(Player.statLifeMax2 * WeepBalance.Active.RainleafLethalHpRatio));
 
 		private void TriggerVoidPhasing()
 		{
 			VoidPhasingTimer = VoidPhasingDuration;
 			VoidPhasingCooldown = VoidPhasingCooldownDuration;
-			AddSlashedDream(2);
+			AddSlashedDream(WeepBalance.Active.RainleafDreamGrant);
 			Player.AddBuff(ModContent.BuffType<RainleafCooldownBuff>(), VoidPhasingCooldown);
 
 			if (!Main.dedServ)
@@ -852,9 +906,33 @@ namespace WeepForTheDeparted.Common.Players
 				ResetUltVisualAndCameraState(immediateCamera: false);
 			}
 
-			if (DashCooldown > 0)
+			if (!WorldFreezeSystem.IsActive)
 			{
-				DashCooldown--;
+				if (DashCooldown > 0)
+					DashCooldown--;
+
+				if (GlobalDebuffDreamCooldown > 0)
+					GlobalDebuffDreamCooldown--;
+
+				if (UltimateRecastCooldown > 0)
+					UltimateRecastCooldown--;
+			}
+
+			if (redOniBossEncounterTriggered)
+			{
+				if (IsAnyBossAliveInWorld())
+				{
+					noBossAliveTicks = 0;
+				}
+				else if (!WorldFreezeSystem.IsActive)
+				{
+					noBossAliveTicks++;
+					if (noBossAliveTicks >= RedOniEncounterResetTicks)
+					{
+						redOniBossEncounterTriggered = false;
+						noBossAliveTicks = 0;
+					}
+				}
 			}
 
 			if (VoidPhasingTimer > 0)
@@ -875,16 +953,20 @@ namespace WeepForTheDeparted.Common.Players
 			int rainleafBuffIdx = Player.FindBuffIndex(rainleafBuffType);
 			if (VoidPhasingCooldown > 0)
 			{
-				VoidPhasingCooldown--;
+				if (!WorldFreezeSystem.IsActive)
+				{
+					VoidPhasingCooldown--;
+				}
 				if (VoidPhasingCooldown > 0)
 				{
+					int displayTime = WorldFreezeSystem.IsActive ? Math.Max(2, VoidPhasingCooldown) : VoidPhasingCooldown;
 					if (rainleafBuffIdx >= 0)
 					{
-						Player.buffTime[rainleafBuffIdx] = VoidPhasingCooldown;
+						Player.buffTime[rainleafBuffIdx] = displayTime;
 					}
 					else if (Player.active && !Player.dead)
 					{
-						Player.AddBuff(rainleafBuffType, VoidPhasingCooldown);
+						Player.AddBuff(rainleafBuffType, displayTime);
 					}
 				}
 				else
@@ -901,7 +983,7 @@ namespace WeepForTheDeparted.Common.Players
 				Player.DelBuff(rainleafBuffIdx);
 			}
 
-			// Rainleaf Phasing: Trigger if DoT or life-drain drops the player to or below 25% max HP
+			// Rainleaf Phasing: Trigger if DoT or life-drain drops the player to or below threshold HP
 			if (HasRainleafPhasing && VoidPhasingCooldown <= 0 && VoidPhasingTimer <= 0 && !IsInUltimate
 				&& Player.active && !Player.dead && !Player.ghost && prevStatLife > 0)
 			{
@@ -919,7 +1001,7 @@ namespace WeepForTheDeparted.Common.Players
 			{
 				EmancipatorCritBuffTimer = 0;
 			}
-			else if (EmancipatorCritBuffTimer > 0 && !IsInUltimate)
+			else if (EmancipatorCritBuffTimer > 0 && !IsInUltimate && !WorldFreezeSystem.IsActive)
 			{
 				EmancipatorCritBuffTimer--;
 				if (!Main.dedServ && Player.whoAmI == Main.myPlayer && EmancipatorCritBuffTimer % 10 == 0)
@@ -983,7 +1065,7 @@ namespace WeepForTheDeparted.Common.Players
 			{
 				Player.DelBuff(siphonBuffIdx);
 			}
-			if (FleetingStepDreamCooldown > 0) FleetingStepDreamCooldown--;
+			if (!WorldFreezeSystem.IsActive && FleetingStepDreamCooldown > 0) FleetingStepDreamCooldown--;
 
 			if (!Player.active || Player.dead || Player.ghost || !HasFleetingStep)
 			{
@@ -1050,24 +1132,27 @@ namespace WeepForTheDeparted.Common.Players
 				Player.DelBuff(stillWaterBuffIdx);
 			}
 
-			// Decrement per-debuff cooldown timers and Mirage Weft's separate application cooldown
-			if (MirageWeftApplicationCooldown > 0)
+			// Decrement per-debuff cooldown timers and Mirage Weft's separate application cooldown (paused during time-stop)
+			if (!WorldFreezeSystem.IsActive)
 			{
-				MirageWeftApplicationCooldown--;
-			}
-
-			if (debuffCooldowns.Count > 0)
-			{
-				var keys = new List<int>(debuffCooldowns.Keys);
-				foreach (int key in keys)
+				if (MirageWeftApplicationCooldown > 0)
 				{
-					if (debuffCooldowns[key] > 0)
+					MirageWeftApplicationCooldown--;
+				}
+
+				if (debuffCooldowns.Count > 0)
+				{
+					var keys = new List<int>(debuffCooldowns.Keys);
+					foreach (int key in keys)
 					{
-						debuffCooldowns[key]--;
-					}
-					else
-					{
-						debuffCooldowns.Remove(key);
+						if (debuffCooldowns[key] > 0)
+						{
+							debuffCooldowns[key]--;
+						}
+						else
+						{
+							debuffCooldowns.Remove(key);
+						}
 					}
 				}
 			}
@@ -1334,7 +1419,7 @@ namespace WeepForTheDeparted.Common.Players
 				return false;
 			}
 
-			if (SlashedDream < MaxSlashedDream)
+			if (SlashedDream < MaxSlashedDream || UltimateRecastCooldown > 0)
 			{
 				return false;
 			}
@@ -1395,8 +1480,12 @@ namespace WeepForTheDeparted.Common.Players
 			// Put this specific debuff on its own cooldown
 			debuffCooldowns[debuffType] = DebuffCooldownTicks;
 
-			// Gain 1 Slashed Dream
-			AddSlashedDream(1);
+			// Gain 1 Slashed Dream (gated by global debuff-to-Dream ICD)
+			if (GlobalDebuffDreamCooldown <= 0)
+			{
+				GlobalDebuffDreamCooldown = WeepBalance.Active.GlobalDebuffDreamCooldownTicks;
+				AddSlashedDream(1);
+			}
 
 			// Apply 1 Crimson Knot to target's resolved anchor
 			if (target != null && target.active)
@@ -1503,7 +1592,7 @@ namespace WeepForTheDeparted.Common.Players
 				: (thunderFallbackOrigin != Vector2.Zero ? thunderFallbackOrigin : Player.Center + new Vector2(Player.direction * 200f, 0f));
 
 			Vector2 strikePos = baseOrigin + new Vector2(Main.rand.NextFloat(-68f, 68f), Main.rand.NextFloat(-24f, 24f));
-			int boltDamage = GetNaughtDamage(1.44f);
+			int boltDamage = GetNaughtDamage(WeepBalance.Active.ThunderCoreBoltMult);
 			int boltIdx = Projectile.NewProjectile(Player.GetSource_FromThis(), strikePos, Vector2.Zero, ModContent.ProjectileType<ThunderCoreBolt>(), boltDamage, 4f, Player.whoAmI);
 			if (boltIdx >= 0 && boltIdx < Main.maxProjectiles && Main.projectile[boltIdx].ModProjectile is ThunderCoreBolt bolt)
 			{
@@ -1538,9 +1627,12 @@ namespace WeepForTheDeparted.Common.Players
 			}
 
 			// 3. Basekit localized auto-targeting cycle slashes (4 x 50% base, +1 slash with E6, 55% with E5)
-			//    + Nameless Decoy adds +1 extra cut per expiring clone
+			//    + Nameless Decoy adds +1 extra cut per expiring clone (capped per balance profile)
 			int baseSlashCount = BaseCycleSlashCount + (HasEidolon6 ? 1 : 0);
-			int totalSlashes = baseSlashCount + (HasNamelessDecoy ? expiringCloneCount : 0);
+			int bonusSlashes = HasNamelessDecoy
+				? Math.Min(expiringCloneCount, WeepBalance.Active.NamelessDecoyBonusSlashCap)
+				: 0;
+			int totalSlashes = baseSlashCount + bonusSlashes;
 			NPC slashTarget = FindCycleSlashTarget(clonePosition);
 			if (slashTarget != null)
 			{
@@ -1749,8 +1841,9 @@ namespace WeepForTheDeparted.Common.Players
 		{
 			if (VoidPhasingTimer > 0)
 			{
-				Player.runAcceleration *= 1.5f;
-				Player.maxRunSpeed *= 1.5f;
+				float rainleafMult = WeepBalance.Active.RainleafSpeedMult;
+				Player.runAcceleration *= rainleafMult;
+				Player.maxRunSpeed *= rainleafMult;
 			}
 			else if (IsSiphonMoveSpeedActive)
 			{
@@ -1765,7 +1858,7 @@ namespace WeepForTheDeparted.Common.Players
 			{
 				if (IsThunderCoreActive)
 				{
-					damage += 0.15f; // +15% True Melee damage for 15s post-ult
+					damage += WeepBalance.Active.ThunderCoreBuffDamage;
 				}
 			}
 		}
@@ -1774,13 +1867,14 @@ namespace WeepForTheDeparted.Common.Players
 		{
 			if (item.type == ModContent.ItemType<Naught>())
 			{
+				NaughtBalanceProfile profile = WeepBalance.Active;
 				if (IsStillWaterActive)
 				{
-					crit += 20f; // +20% True Melee Crit from Still Water
+					crit += profile.StillWaterCritChance;
 				}
 				if (IsEmancipatorCritActive)
 				{
-					crit += 20f; // +20% True Melee Crit post-ult
+					crit += profile.EmancipatorCritBonus;
 				}
 			}
 		}
@@ -1916,7 +2010,7 @@ namespace WeepForTheDeparted.Common.Players
 				else if (anchorData != null)
 				{
 					int fallbackDuration = CrimsonKnotGlobalNPC.IsBossTarget(anchor)
-						? (int)MathF.Round(WitheredRiverDebuffDuration * 1.50f)
+						? (int)MathF.Round(WitheredRiverDebuffDuration * WeepBalance.Active.WitheredRiverBossDurationMult)
 						: WitheredRiverDebuffDuration;
 					anchorData.WitheredRiverFallbackTimer = fallbackDuration;
 					TryTriggerDebuff(debuffType, anchor);
@@ -1952,36 +2046,62 @@ namespace WeepForTheDeparted.Common.Players
 			}
 		}
 
-		public bool IsUltimateProjectile(Projectile proj)
+		public bool IsTrueUltimateStrike(Projectile sourceProj)
 		{
-			if (proj == null)
+			if (sourceProj != null)
+			{
+				int type = sourceProj.type;
+				if (type == ModContent.ProjectileType<SlashedDreamUltimate>()
+					|| type == ModContent.ProjectileType<ThunderCoreBolt>()
+					|| type == ModContent.ProjectileType<BloodBlossomNeedle>()
+					|| type == ModContent.ProjectileType<VoidFissure>())
+				{
+					return true;
+				}
+
+				if (IsE6InheritedUltimateStrike(sourceProj))
+					return false;
+
+				if (activeStrikeIsUltimate && type == ModContent.ProjectileType<NaughtClone>())
+					return true;
+
 				return false;
-
-			int type = proj.type;
-			if (type == ModContent.ProjectileType<SlashedDreamUltimate>()
-				|| type == ModContent.ProjectileType<ThunderCoreBolt>()
-				|| type == ModContent.ProjectileType<BloodBlossomNeedle>()
-				|| type == ModContent.ProjectileType<VoidFissure>())
-			{
-				return true;
 			}
 
-			if (HasEidolon6 && (type == ModContent.ProjectileType<NaughtHeldSwing>()
-				|| type == ModContent.ProjectileType<NaughtSlashVisual>()
-				|| type == ModContent.ProjectileType<NaughtCycleSlash>()
-				|| type == ModContent.ProjectileType<NaughtExWave>()))
-			{
-				return true;
-			}
-
-			return false;
+			return activeStrikeIsUltimate;
 		}
 
+		public bool IsE6InheritedUltimateStrike(Projectile sourceProj)
+		{
+			if (!HasEidolon6 || sourceProj == null)
+				return false;
+
+			int type = sourceProj.type;
+			return type == ModContent.ProjectileType<NaughtHeldSwing>()
+				|| type == ModContent.ProjectileType<NaughtSlashVisual>()
+				|| type == ModContent.ProjectileType<NaughtCycleSlash>()
+				|| type == ModContent.ProjectileType<NaughtExWave>();
+		}
+
+		public float GetKarmaSeverEffectiveness(Projectile sourceProj)
+		{
+			if (IsTrueUltimateStrike(sourceProj))
+				return 1.0f;
+
+			if (IsE6InheritedUltimateStrike(sourceProj))
+				return WeepBalance.Active.KarmaSeverE6Scale;
+
+			return 0f;
+		}
+
+		public bool IsUltimateProjectile(Projectile proj) =>
+			IsTrueUltimateStrike(proj) || IsE6InheritedUltimateStrike(proj);
+
 		public bool IsCurrentStrikeUltimate(Projectile proj = null) =>
-			activeStrikeIsUltimate || IsUltimateProjectile(proj);
+			IsTrueUltimateStrike(proj) || IsE6InheritedUltimateStrike(proj);
 
 		/// <summary>
-		/// Central hit-time modifier choke point for Naught attacks (StillWater, E1, E4, and KarmaSever DR peel).
+		/// Central hit-time modifier choke point for Naught attacks (StillWater, E1, E4, and KarmaSever DR peel / def pen).
 		/// Invoked once by standard item/projectile ModifyHit hooks and once by StrikeNPC.
 		/// </summary>
 		public void ApplyNaughtHitModifiers(
@@ -1998,39 +2118,52 @@ namespace WeepForTheDeparted.Common.Players
 			}
 
 			float pendingWitheredPeel = CrimsonKnotGlobalNPC.ConsumePendingWitheredDrPeel(target.whoAmI);
+			NaughtBalanceProfile profile = WeepBalance.Active;
 
 			if (IsStillWaterActive)
 			{
-				modifiers.CritDamage += 0.20f;
+				modifiers.CritDamage += profile.StillWaterCritDamage;
 			}
 
-			bool isUlt = IsCurrentStrikeUltimate(sourceProj);
+			bool isTrueUlt = IsTrueUltimateStrike(sourceProj);
+			bool isE6InheritedUlt = IsE6InheritedUltimateStrike(sourceProj);
+			bool isAnyUlt = isTrueUlt || isE6InheritedUlt;
 
-			// E4 (Shrine in Flame): +8% Ultimate damage inside Nihility Domain (pure damage check, zero debuffs)
-			if (HasEidolon4 && isUlt && NihilityDomainSystem.IsPositionInsideDomain(target.Center))
+			// E4 (Shrine in Flame): +8% Ultimate damage inside Nihility Domain (full 1.08x on both true Ult & E6-inherited strikes)
+			if (HasEidolon4 && isAnyUlt && NihilityDomainSystem.IsPositionInsideDomain(target.Center))
 			{
 				modifiers.FinalDamage *= 1.08f;
 			}
 
-			// Unified Boss DR peel: Karma Sever (10% on Ultimate strikes) + Withered River (10%) evaluated as single pass
-			if (HasKarmaSever && isUlt && CrimsonKnotGlobalNPC.IsBossTarget(target))
+			// Karma Sever: Scaling defense penetration on all true Ultimate strikes + unified single-pass Boss DR peel
+			if (HasKarmaSever)
 			{
-				if (pendingWitheredPeel > 0f)
+				if (isTrueUlt)
 				{
-					float prevMult = WeepCompatibility.ComputeUnifiedDRPeelMultiplier(target, pendingWitheredPeel);
-					float totalMult = WeepCompatibility.ComputeUnifiedDRPeelMultiplier(target, pendingWitheredPeel + 0.10f);
-					if (prevMult > 0f && totalMult != prevMult)
-					{
-						modifiers.FinalDamage *= totalMult / prevMult;
-					}
+					modifiers.ScalingArmorPenetration += profile.KarmaSeverUltDefPen;
 				}
-				else
+
+				float karmaEffectiveness = GetKarmaSeverEffectiveness(sourceProj);
+				if (karmaEffectiveness > 0f && CrimsonKnotGlobalNPC.IsBossTarget(target))
 				{
-					WeepCompatibility.ApplyUnifiedDRPeel(target, ref modifiers, 0.10f);
+					float karmaPeel = profile.KarmaSeverBossDrPeel * karmaEffectiveness;
+					if (pendingWitheredPeel > 0f)
+					{
+						float prevMult = WeepCompatibility.ComputeUnifiedDRPeelMultiplier(target, pendingWitheredPeel);
+						float totalMult = WeepCompatibility.ComputeUnifiedDRPeelMultiplier(target, pendingWitheredPeel + karmaPeel);
+						if (prevMult > 0f && totalMult != prevMult)
+						{
+							modifiers.FinalDamage *= totalMult / prevMult;
+						}
+					}
+					else
+					{
+						WeepCompatibility.ApplyUnifiedDRPeel(target, ref modifiers, karmaPeel);
+					}
 				}
 			}
 
-			// E1 (Silenced Sky): +8% True Melee Crit Chance against debuffed targets for native colliding hits
+			// E1 (Silenced Sky): True Melee Crit Chance against debuffed targets for native colliding hits
 			if (!isInsideStrikeNPC
 				&& HasEidolon1
 				&& WeepCompatibility.IsTrueMeleeDamageClass(damageType)
@@ -2039,7 +2172,7 @@ namespace WeepForTheDeparted.Common.Players
 				&& baseCritChanceForNative < 100)
 			{
 				float baseCritProb = Math.Clamp(baseCritChanceForNative / 100f, 0f, 0.99f);
-				float extraRollChance = Math.Min(1f, 0.08f / (1f - baseCritProb));
+				float extraRollChance = Math.Min(1f, (profile.E1CritBonus / 100f) / (1f - baseCritProb));
 				if (Main.rand.NextFloat() < extraRollChance)
 				{
 					modifiers.SetCrit();
@@ -2083,6 +2216,7 @@ namespace WeepForTheDeparted.Common.Players
 			bool prevInsideStrikeNPC = isInsideStrikeNPC;
 			activeStrikeIsUltimate = isUltimate || IsUltimateProjectile(sourceProj);
 			isInsideStrikeNPC = true;
+			bool isTrueUltForShare = IsTrueUltimateStrike(sourceProj);
 
 			int damageDone = 0;
 			try
@@ -2096,6 +2230,7 @@ namespace WeepForTheDeparted.Common.Players
 					&& HasEidolon1
 					&& WeepCompatibility.IsTrueMeleeDamageClass(damageType)
 					&& CrimsonKnotGlobalNPC.CountUniqueDebuffs(target) > 0;
+				int e1Bonus = (int)MathF.Round(WeepBalance.Active.E1CritBonus);
 
 				int critChance;
 				if (sourceProj != null)
@@ -2108,7 +2243,7 @@ namespace WeepForTheDeparted.Common.Players
 
 					if (e1Applies)
 					{
-						sourceProj.CritChance += 8;
+						sourceProj.CritChance += e1Bonus;
 					}
 
 					try
@@ -2137,7 +2272,7 @@ namespace WeepForTheDeparted.Common.Players
 					{
 						if (e1Applies)
 						{
-							sourceProj.CritChance -= 8;
+							sourceProj.CritChance -= e1Bonus;
 						}
 						CrimsonKnotGlobalNPC.ClearPendingWitheredDrPeel();
 					}
@@ -2168,7 +2303,7 @@ namespace WeepForTheDeparted.Common.Players
 						CrimsonKnotGlobalNPC.ClearPendingWitheredDrPeel();
 					}
 
-					critChance = GetNaughtCritChance() + (e1Applies ? 8 : 0);
+					critChance = GetNaughtCritChance() + (e1Applies ? e1Bonus : 0);
 				}
 
 				bool resolvedCrit = crit ?? (damageType.UseStandardCritCalcs && Main.rand.Next(100) < critChance);
@@ -2207,13 +2342,13 @@ namespace WeepForTheDeparted.Common.Players
 
 			if (allowDamageShare && !isPropagatingMarionette && damageDone > 0 && HasShadowMarionette && WeepCompatibility.IsNaughtDamageClass(damageType))
 			{
-				RunMarionetteDamageShare(target, damageDone);
+				RunMarionetteDamageShare(target, damageDone, isTrueUltForShare);
 			}
 
 			return damageDone;
 		}
 
-		public void RunMarionetteDamageShare(NPC sourceNpc, int damageDone)
+		public void RunMarionetteDamageShare(NPC sourceNpc, int damageDone, bool isTrueUltimateStrike = false)
 		{
 			if (isPropagatingMarionette || damageDone <= 0 || !HasShadowMarionette || sourceNpc == null || !sourceNpc.active)
 				return;
@@ -2221,7 +2356,7 @@ namespace WeepForTheDeparted.Common.Players
 			isPropagatingMarionette = true;
 			try
 			{
-				CrimsonKnotGlobalNPC.PropagateMarionetteDamage(this, sourceNpc, damageDone);
+				CrimsonKnotGlobalNPC.PropagateMarionetteDamage(this, sourceNpc, damageDone, isTrueUltimateStrike);
 			}
 			finally
 			{
@@ -2231,16 +2366,9 @@ namespace WeepForTheDeparted.Common.Players
 
 		public static void GetAbyssGripScaling(out float perDebuff, out int maxDebuffs)
 		{
-			if (WeepCompatibility.IsCalamityBalanceActive)
-			{
-				perDebuff = 0.06f; // +6% per unique debuff, up to +24%
-				maxDebuffs = 4;
-			}
-			else
-			{
-				perDebuff = 0.12f; // +12% per unique debuff, up to +36%
-				maxDebuffs = 3;
-			}
+			NaughtBalanceProfile profile = WeepBalance.Active;
+			perDebuff = profile.AbyssGripPerDebuff;
+			maxDebuffs = profile.AbyssGripMaxDebuffs;
 		}
 
 		public int CountUniqueDebuffsAcrossTarget(NPC target, int excludeBuffType = -1)

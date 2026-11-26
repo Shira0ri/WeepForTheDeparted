@@ -256,7 +256,7 @@ namespace WeepForTheDeparted.Content.Projectiles
 				crit: null,
 				knockBack: Projectile.knockBack,
 				sourceProj: Projectile,
-				isUltimate: naughtPlayer.HasEidolon6);
+				isUltimate: false);
 
 			if (damageDone > 0)
 			{

@@ -131,14 +131,17 @@ namespace WeepForTheDeparted.Content.Projectiles.Charms
 				}
 
 				int hitDir = owner != null && npc.Center.X >= owner.Center.X ? 1 : -1;
+				int strikeDamage = np != null
+					? np.GetNaughtDamage(WeepBalance.Active.ThunderCoreBoltMult)
+					: Projectile.damage;
 				int damageDone;
 				if (np != null)
 				{
-					damageDone = np.StrikeNPC(npc, Projectile.damage, hitDir, crit: true, knockBack: 6f, sourceProj: Projectile, isUltimate: true);
+					damageDone = np.StrikeNPC(npc, strikeDamage, hitDir, crit: true, knockBack: 6f, sourceProj: Projectile, isUltimate: true);
 				}
 				else
 				{
-					damageDone = npc.SimpleStrikeNPC(Projectile.damage, hitDir, true, 6f, WeepCompatibility.TrueMelee);
+					damageDone = npc.SimpleStrikeNPC(strikeDamage, hitDir, true, 6f, WeepCompatibility.TrueMelee);
 				}
 
 				if (damageDone > 0 && npc.active)

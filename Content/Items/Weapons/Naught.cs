@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using InnoVault;
 using Microsoft.Xna.Framework;
@@ -16,11 +17,58 @@ namespace WeepForTheDeparted.Content.Items.Weapons
 {
 	public class Naught : ModItem
 	{
+		private static Item scratchBase;
+		private static Item scratchPrefixed;
+		private static int cachedPrefix = -1;
+		private static int cachedPrefixBase = -1;
+		private static float cachedPrefixScale = 1f;
+
+		private static int GetCurrentSetDefaultsBaseDamage()
+		{
+			WeepConfig cfg = WeepConfig.Instance;
+			return cfg?.OverrideWeaponScaling == true
+				? cfg.BaseSwordDamage
+				: WeepBalance.Active.BaseSwordDamage;
+		}
+
+		private float GetPrefixDamageScale()
+		{
+			if (Item.prefix <= 0)
+				return 1f;
+
+			int currentBase = GetCurrentSetDefaultsBaseDamage();
+			if (cachedPrefix != Item.prefix || cachedPrefixBase != currentBase || scratchBase == null || scratchPrefixed == null)
+			{
+				scratchBase ??= new Item();
+				scratchPrefixed ??= new Item();
+				scratchBase.SetDefaults(Item.type);
+				scratchPrefixed.SetDefaults(Item.type);
+				scratchPrefixed.Prefix(Item.prefix);
+
+				cachedPrefix = Item.prefix;
+				cachedPrefixBase = currentBase;
+				cachedPrefixScale = scratchBase.damage > 0
+					? scratchPrefixed.damage / (float)scratchBase.damage
+					: 1f;
+			}
+
+			return cachedPrefixScale;
+		}
+
+		public override void Unload()
+		{
+			scratchBase = null;
+			scratchPrefixed = null;
+			cachedPrefix = -1;
+			cachedPrefixBase = -1;
+			cachedPrefixScale = 1f;
+		}
+
 		public override void SetDefaults()
 		{
 			Item.width = 64;
 			Item.height = 64;
-			Item.damage = WeepConfig.Instance?.BaseSwordDamage ?? 25;
+			Item.damage = GetCurrentSetDefaultsBaseDamage();
 			Item.DamageType = WeepCompatibility.TrueMelee;
 			Item.useTime = 16;
 			Item.useAnimation = 16;
@@ -109,22 +157,38 @@ namespace WeepForTheDeparted.Content.Items.Weapons
 
 		public override void ModifyWeaponDamage(Player player, ref StatModifier damage)
 		{
-			// Flat base increase per boss defeated, so all damage multipliers (armor/accessories) scale it up naturally
-			float bonusDamage = BossTrackerSystem.GetSwordBonusDamage();
-			damage.Base += bonusDamage;
+			float effectiveBase = BossTrackerSystem.GetEffectiveBaseDamage();
+			float prefixScale = GetPrefixDamageScale();
+
+			// Route base damage through BossTrackerSystem while preserving reforge and armor/accessory multiplicative scaling
+			damage.Base += effectiveBase - Item.damage;
+			if (MathF.Abs(prefixScale - 1f) > 0.0001f)
+			{
+				damage *= prefixScale;
+			}
 		}
 
 		public override void ModifyWeaponCrit(Player player, ref float crit)
 		{
-			crit += BossTrackerSystem.GetSwordBonusCrit();
+			crit += BossTrackerSystem.GetEffectiveBonusCrit();
 		}
 
 		public override void ModifyTooltips(List<TooltipLine> tooltips)
 		{
+			WeepConfig cfg = WeepConfig.Instance;
+			bool overrideScaling = cfg?.OverrideWeaponScaling == true;
 			int bossCount = BossTrackerSystem.GetTotalBossesDefeated();
-			float bonusDmg = BossTrackerSystem.GetSwordBonusDamage();
-			float bonusCrit = BossTrackerSystem.GetSwordBonusCrit();
+			float effectiveBase = BossTrackerSystem.GetEffectiveBaseDamage();
+			float startingBase = overrideScaling ? cfg.BaseSwordDamage : WeepBalance.Active.BaseSwordDamage;
+			float bonusDmg = Math.Max(0f, effectiveBase - startingBase);
+			float bonusCrit = BossTrackerSystem.GetEffectiveBonusCrit();
 			string stage = BossTrackerSystem.GetProgressionStageName();
+			string modeLabel = overrideScaling
+				? "Manual Override"
+				: (WeepCompatibility.IsCalamityBalanceActive ? "Calamity" : "Vanilla");
+			string stageMultText = !overrideScaling && WeepBalance.Active.UseCalamityStageMultiplier
+				? $" | Stage Mult: {BossTrackerSystem.GetCalamityPostMLStageMultiplier():0.00}x"
+				: string.Empty;
 
 			var loreLine = new TooltipLine(Mod, "AcheronLore",
 				"\"I weep for the departed, like rain to water, tears fall to earth...\"\n" +
@@ -148,9 +212,10 @@ namespace WeepForTheDeparted.Content.Items.Weapons
 			tooltips.Add(comboLine);
 
 			var scalingLine = new TooltipLine(Mod, "ProgressionScaling",
+				$"[Balance Profile: {modeLabel}{stageMultText}]\n" +
 				$"[Progression: {stage}]\n" +
 				$"[Defeated World Bosses: {bossCount}]\n" +
-				$"[Bonus Base Damage: +{(int)bonusDmg} | Bonus Crit: +{bonusCrit:0.#}%]")
+				$"[Effective Base Damage: {(int)MathF.Round(effectiveBase)} (+{(int)MathF.Round(bonusDmg)}) | Bonus Crit: +{bonusCrit:0.#}%]")
 			{
 				OverrideColor = new Color(245, 75, 145) // Vivid Acheron magenta
 			};

@@ -1,76 +1,11 @@
-Mods: {
-	WeepForTheDeparted: {
-		Items: {
-			Naught: {
-				DisplayName: Naught
-				Tooltip:
-					'''
-					Acheron's blade from the boundless depths of Nihility.
-					Its power grows with every great soul laid to rest.
-					'''
-			}
-		}
-
-		Configs: {
-			WeepConfig: {
-				DisplayName: Weep for the Departed Config
-
-				Headers: {
-					WeaponScaling: Weapon Scaling Settings
-					BossTracking: Boss Tracking Settings
-					GameplayBalance: Gameplay Balance Settings
-				}
-
-				BaseSwordDamage: {
-					Label: Base Sword Damage
-					Tooltip: Base damage of Naught before any defeated bosses.
-				}
-
-				DamagePerBoss: {
-					Label: Bonus Damage Per Boss
-					Tooltip: Flat base damage added to Naught for each defeated boss.
-				}
-
-				CritPerBoss: {
-					Label: Bonus Crit Per Boss (%)
-					Tooltip: Additional critical strike chance added to Naught per defeated boss.
-				}
-
-				UniversalBossScaling: {
-					Label: Universal Boss Scaling
-					Tooltip: When enabled, all non-vanilla modded bosses defeated will be tracked and counted.
-				}
-
-				IncludeCalamityBosses: {
-					Label: Include Calamity Bosses
-					Tooltip: When enabled, bosses from the Calamity Mod are counted toward progression scaling.
-				}
-
-				BalanceMode: {
-					Label: Charm Balance Mode
-					Tooltip: Controls whether charms use Calamity-tuned or Vanilla-tuned scaling. Auto detects Calamity Mod.
-				}
-
-				UnlockAllInscriptionsAndEidolons: {
-					Label: Unlock All Inscriptions & Eidolons (Sandbox)
-					Tooltip: When enabled, bypasses boss progression locks for all 18 Nihility Charms and 7 Eidolons (E1-EX). Ideal for testing or sandbox runs.
-				}
-			}
-
-			WeepBalanceMode: {
-				Tooltip: ""
-				Auto.Label: Auto (Detect Calamity)
-				Calamity.Label: Calamity
-				Vanilla.Label: Vanilla
-			}
-		}
-	}
-}
-
 Items: {
 	Naught: {
 		DisplayName: Naught
-		Tooltip: ""
+		Tooltip:
+			'''
+			Acheron's blade from the boundless depths of Nihility.
+			Its power grows with every great soul laid to rest.
+			'''
 	}
 
 	NihilityDebugItem: {
@@ -81,47 +16,52 @@ Items: {
 
 Configs: {
 	WeepConfig: {
-		DisplayName: Weep Config
+		DisplayName: Weep for the Departed Config
 
 		Headers: {
-			WeaponScaling: Weapon Scaling Header
-			BossTracking: Boss Tracking Header
-			GameplayBalance: Gameplay Balance Header
+			WeaponScaling: Weapon Scaling Settings
+			BossTracking: Boss Tracking Settings
+			GameplayBalance: Gameplay Balance Settings
+		}
+
+		OverrideWeaponScaling: {
+			Label: Override Weapon Scaling
+			Tooltip: When disabled (default), Balance Mode controls Naught's base damage, per-boss damage/crit scaling, and Calamity stage multipliers. Enable to use the manual sliders below.
 		}
 
 		BaseSwordDamage: {
 			Label: Base Sword Damage
-			Tooltip: ""
+			Tooltip: Manual base damage of Naught before any defeated bosses (used when Override Weapon Scaling is enabled).
 		}
 
 		DamagePerBoss: {
-			Label: Damage Per Boss
-			Tooltip: ""
+			Label: Bonus Damage Per Boss
+			Tooltip: Manual flat base damage added to Naught for each defeated boss (used when Override Weapon Scaling is enabled).
 		}
 
 		CritPerBoss: {
-			Label: Crit Per Boss
-			Tooltip: ""
+			Label: Bonus Crit Per Boss (%)
+			Tooltip: Manual critical strike chance added to Naught per defeated boss (used when Override Weapon Scaling is enabled).
 		}
 
 		UniversalBossScaling: {
 			Label: Universal Boss Scaling
-			Tooltip: ""
+			Tooltip: When enabled, all non-vanilla modded bosses defeated will be tracked and counted.
 		}
 
 		IncludeCalamityBosses: {
 			Label: Include Calamity Bosses
-			Tooltip: ""
+			Tooltip: When enabled, bosses from the Calamity Mod are counted toward progression scaling.
 		}
 
 		BalanceMode: {
 			Label: Balance Mode
-			Tooltip: ""
+			Tooltip: Controls the unified Vanilla/Calamity Balance Profile (weapon scaling, basekit combat, all 18 Nihility Charms, and Eidolons E1-EX). Auto detects Calamity Mod.
 		}
 
 		UnlockAllInscriptionsAndEidolons: {
 			Label: Unlock All Inscriptions & Eidolons (Sandbox)
-			Tooltip: Bypasses boss progression locks for all 18 Nihility Charms and 7 Eidolons.
+			Tooltip: When enabled, bypasses boss progression locks for all 18 Nihility Charms and 7 Eidolons (E1-EX). Ideal for testing or sandbox runs.
 		}
 	}
 
@@ -129,18 +69,18 @@ Configs: {
 		Tooltip: ""
 
 		Auto: {
-			Label: Auto
-			Tooltip: ""
+			Label: Auto (Detect Calamity)
+			Tooltip: Automatically selects Calamity balance when Calamity Mod is loaded, and Vanilla balance otherwise.
 		}
 
 		Calamity: {
 			Label: Calamity
-			Tooltip: ""
+			Tooltip: Forces the Calamity-tuned balance profile (including Post-Moon Lord stage multipliers).
 		}
 
 		Vanilla: {
 			Label: Vanilla
-			Tooltip: ""
+			Tooltip: Forces the Vanilla Terraria-tuned balance profile.
 		}
 	}
 }
@@ -176,7 +116,7 @@ Buffs: {
 
 	StillWaterFocusBuff: {
 		DisplayName: Still Water
-		Description: Unbroken poise sharpens Naught's edge (+20% True Melee Crit Chance and +20% Crit Damage).
+		Description: Unbroken poise sharpens Naught's edge (+15% True Melee Crit Chance and +15% Vanilla / +18% Calamity Crit Damage).
 	}
 
 	AbyssGripDebuff: {
@@ -186,7 +126,7 @@ Buffs: {
 
 	WitheredRiverDebuff: {
 		DisplayName: Withered River
-		Description: Corrosion of the dried Lethe reduces Damage Reduction by 10%.
+		Description: Corrosion of the dried Lethe peels enemy Damage Reduction (14% Vanilla / 10% Calamity, converted to bonus damage on 0% DR targets).
 	}
 
 	ShadowCrucibleDebuff: {
@@ -201,6 +141,6 @@ Buffs: {
 
 	EmancipatorWillBuff: {
 		DisplayName: Severed Will
-		Description: Post-Ultimate surge grants +20% True Melee Crit Chance to Naught and its echoes.
+		Description: Post-Ultimate surge grants bonus True Melee Crit Chance (+15% Vanilla / +20% Calamity) to Naught and its echoes.
 	}
 }

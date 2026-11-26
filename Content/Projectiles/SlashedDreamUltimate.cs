@@ -90,8 +90,6 @@ namespace WeepForTheDeparted.Content.Projectiles
 		public const int SheathGleamDuration = 20;
 		public const int SheathPostDelay = 60;
 		public const int SheathFinishDelay = 25;
-		public const float ResurgeDamageMultiplier = 6.0f;
-		public const float SiphonHealPerKnot = 0.02f;
 		public const int MaxSiphonKnotsPerUlt = 9;
 		private bool sheathClickDone = false;
 		private bool sheathDamageDone = false;
@@ -798,7 +796,6 @@ namespace WeepForTheDeparted.Content.Projectiles
 			SoundEngine.PlaySound(SoundID.Item71 with { Pitch = -0.15f, Volume = 1.0f }, Owner.Center);
 			SoundEngine.PlaySound(WeepSound.KatanaHitB with { Pitch = -0.20f, Volume = 1.0f }, Owner.Center);
 
-			bool hasKarma = np != null && np.HasKarmaSever;
 			bool hasThunder = np != null && np.HasThunderCore;
 			bool hasSync = np != null && np.HasSynchronizedExecution;
 			if (np != null)
@@ -828,29 +825,11 @@ namespace WeepForTheDeparted.Content.Projectiles
 								crit: true,
 								knockBack: 10f,
 								sourceProj: Projectile,
-								modifyHit: hasKarma
-									? (ref NPC.HitModifiers mods) =>
-									{
-										mods.ScalingArmorPenetration += 0.20f;
-									}
-									: null,
 								isUltimate: true);
 						}
 						else
 						{
-							int savedDef = target.defense;
-							try
-							{
-								if (hasKarma)
-								{
-									target.defense = (int)(target.defense * 0.80f);
-								}
-								target.SimpleStrikeNPC(hit.Damage, LockedFacingDir, true, 10f, WeepCompatibility.TrueMelee);
-							}
-							finally
-							{
-								target.defense = savedDef;
-							}
+							target.SimpleStrikeNPC(hit.Damage, LockedFacingDir, true, 10f, WeepCompatibility.TrueMelee);
 						}
 
 						SpawnImpactVisuals(target.Center, true);
@@ -867,7 +846,7 @@ namespace WeepForTheDeparted.Content.Projectiles
 
 			if (np != null && np.HasVoidHorizon)
 			{
-				int fissureDmg = np.GetNaughtDamage(VoidFissure.DamageMultiplier);
+				int fissureDmg = np.GetNaughtDamage(WeepBalance.Active.VoidHorizonDamageMult);
 				int portalCount = 0;
 				int cloneType = ModContent.ProjectileType<NaughtClone>();
 				for (int i = 0; i < Main.maxProjectiles; i++)
@@ -875,10 +854,10 @@ namespace WeepForTheDeparted.Content.Projectiles
 					Projectile p = Main.projectile[i];
 					if (p.active && p.owner == Owner.whoAmI && p.type == cloneType)
 					{
-						int fIdx = Projectile.NewProjectile(Owner.GetSource_FromThis(), p.Center, Vector2.Zero, ModContent.ProjectileType<VoidFissure>(), fissureDmg, 0f, Owner.whoAmI);
+						int fIdx = Projectile.NewProjectile(Owner.GetSource_FromThis(), p.Center, Vector2.Zero, ModContent.ProjectileType<VoidFissure>(), fissureDmg, 0f, Owner.whoAmI, ai0: 0f);
 						if (fIdx >= 0 && fIdx < Main.maxProjectiles && Main.projectile[fIdx].ModProjectile is VoidFissure vf)
 						{
-							vf.Init(p.Center, seed: 0.37f * (portalCount + 1), rotation: Main.rand.NextFloat(-0.35f, 0.35f));
+							vf.Init(p.Center, seed: 0.37f * (portalCount + 1), rotation: Main.rand.NextFloat(-0.35f, 0.35f), isFallbackPortal: false);
 						}
 						portalCount++;
 					}
@@ -889,10 +868,10 @@ namespace WeepForTheDeparted.Content.Projectiles
 					Vector2 fallbackPos = primaryTarget != null
 						? primaryTarget.Center
 						: Owner.MountedCenter + new Vector2(LockedFacingDir * 160f, 0f);
-					int fIdx = Projectile.NewProjectile(Owner.GetSource_FromThis(), fallbackPos, Vector2.Zero, ModContent.ProjectileType<VoidFissure>(), fissureDmg, 0f, Owner.whoAmI);
+					int fIdx = Projectile.NewProjectile(Owner.GetSource_FromThis(), fallbackPos, Vector2.Zero, ModContent.ProjectileType<VoidFissure>(), fissureDmg, 0f, Owner.whoAmI, ai0: 1f);
 					if (fIdx >= 0 && fIdx < Main.maxProjectiles && Main.projectile[fIdx].ModProjectile is VoidFissure vf)
 					{
-						vf.Init(fallbackPos, seed: 1.15f, rotation: Main.rand.NextFloat(-0.25f, 0.25f));
+						vf.Init(fallbackPos, seed: 1.15f, rotation: Main.rand.NextFloat(-0.25f, 0.25f), isFallbackPortal: true);
 					}
 				}
 			}
@@ -1996,8 +1975,10 @@ namespace WeepForTheDeparted.Content.Projectiles
 				Projectile.CritChance = naughtPlayer.GetNaughtCritChance();
 			}
 
-			int baseDamage = Projectile.damage > 0 ? Projectile.damage : (naughtPlayer?.GetNaughtDamage() ?? 25);
-			float preBaseMult = (naughtPlayer != null && naughtPlayer.HasEidolon3) ? 0.425f : 0.4125f;
+			NaughtBalanceProfile profile = WeepBalance.Active;
+			int baseDamage = Projectile.damage > 0 ? Projectile.damage : (naughtPlayer?.GetNaughtDamage() ?? profile.BaseSwordDamage);
+			float combinedBaseMult = (naughtPlayer != null && naughtPlayer.HasEidolon3) ? profile.E3RainbladeBaseMult : profile.RainbladeBaseMult;
+			float preBaseMult = combinedBaseMult * 0.25f;
 			int preDamage = Math.Max(1, (int)(baseDamage * preBaseMult));
 			int enemiesHit = 0;
 
@@ -2097,7 +2078,8 @@ namespace WeepForTheDeparted.Content.Projectiles
 				Projectile.CritChance = naughtPlayer.GetNaughtCritChance();
 			}
 
-			int baseDamage = Projectile.damage > 0 ? Projectile.damage : (naughtPlayer?.GetNaughtDamage() ?? 25);
+			NaughtBalanceProfile profile = WeepBalance.Active;
+			int baseDamage = Projectile.damage > 0 ? Projectile.damage : (naughtPlayer?.GetNaughtDamage() ?? profile.BaseSwordDamage);
 			int enemiesHit = 0;
 
 			for (int i = 0; i < Main.maxNPCs; i++)
@@ -2118,7 +2100,7 @@ namespace WeepForTheDeparted.Content.Projectiles
 
 						if (naughtPlayer != null && naughtPlayer.HasBladesongRain && detonated > 0)
 						{
-							int needleDamage = naughtPlayer.GetNaughtDamage(0.70f);
+							int needleDamage = naughtPlayer.GetNaughtDamage(profile.BladesongNeedleMult);
 							int needleCrit = naughtPlayer.GetNaughtCritChance();
 							int originRootWhoAmI = BloodBlossomNeedle.GetRootNpcIndex(target);
 							float encodedOrigin = originRootWhoAmI >= 0 ? originRootWhoAmI + 1f : 0f;
@@ -2148,11 +2130,11 @@ namespace WeepForTheDeparted.Content.Projectiles
 						}
 
 						// Rainblade 1 & 2 deal 75% base + 100% knot bonus here (paired with 25% preemptive slash); Rainblade 3 deals 100% base + 100% knot bonus
+						bool hasE3 = naughtPlayer != null && naughtPlayer.HasEidolon3;
+						float combinedBaseMult = hasE3 ? profile.E3RainbladeBaseMult : profile.RainbladeBaseMult;
 						bool hasPreSplit = index <= 2;
-						float rainbladeBaseMult = hasPreSplit
-							? ((naughtPlayer != null && naughtPlayer.HasEidolon3) ? 1.275f : 1.2375f)
-							: ((naughtPlayer != null && naughtPlayer.HasEidolon3) ? 1.70f : 1.65f);
-						float rainbladeKnotMult = (naughtPlayer != null && naughtPlayer.HasEidolon3) ? 0.60f : 0.55f;
+						float rainbladeBaseMult = hasPreSplit ? combinedBaseMult * 0.75f : combinedBaseMult;
+						float rainbladeKnotMult = hasE3 ? profile.E3RainbladeKnotMult : profile.RainbladeKnotMult;
 						int strikeDamage = (int)(baseDamage * rainbladeBaseMult + detonated * baseDamage * rainbladeKnotMult);
 						if (!target.dontTakeDamage || target.type == NPCID.TargetDummy)
 						{
@@ -2239,7 +2221,8 @@ namespace WeepForTheDeparted.Content.Projectiles
 
 			SpawnImpactVisuals(cleaveCenter, true);
 
-			int baseDamage = Projectile.damage > 0 ? Projectile.damage : (naughtPlayer?.GetNaughtDamage() ?? 25);
+			NaughtBalanceProfile profile = WeepBalance.Active;
+			int baseDamage = Projectile.damage > 0 ? Projectile.damage : (naughtPlayer?.GetNaughtDamage() ?? profile.BaseSwordDamage);
 
 			for (int i = 0; i < Main.maxNPCs; i++)
 			{
@@ -2262,9 +2245,12 @@ namespace WeepForTheDeparted.Content.Projectiles
 							TryTriggerDepartedSiphon(naughtPlayer, target.Center, remainingKnots);
 						}
 
-						float resurgeBaseMult = (naughtPlayer != null && naughtPlayer.HasEidolon5) ? 6.30f : ResurgeDamageMultiplier;
-						float resurgeKnotMult = (naughtPlayer != null && naughtPlayer.HasEidolon5) ? 0.40f : 0.35f;
-						int resurgeDamage = (int)(baseDamage * resurgeBaseMult + remainingKnots * baseDamage * resurgeKnotMult);
+						bool hasE5 = naughtPlayer != null && naughtPlayer.HasEidolon5;
+						bool hasKarma = naughtPlayer != null && naughtPlayer.HasKarmaSever;
+						float resurgeBaseMult = hasE5 ? profile.E5ResurgeBaseMult : profile.ResurgeBaseMult;
+						float resurgeKnotMult = hasE5 ? profile.E5ResurgeKnotMult : profile.ResurgeKnotMult;
+						float resurgeKarmaScale = hasKarma ? profile.KarmaSeverResurgeBonusMult : 1f;
+						int resurgeDamage = (int)((baseDamage * resurgeBaseMult + remainingKnots * baseDamage * resurgeKnotMult) * resurgeKarmaScale);
 
 						pendingResurgeHits.Add(new PendingResurgeHit
 						{
@@ -2298,7 +2284,7 @@ namespace WeepForTheDeparted.Content.Projectiles
 
 				if (naughtPlayer.HasEmancipatorWill)
 				{
-					int knotRefund = totalKnotsDetonatedInUlt / 3;
+					int knotRefund = Math.Min(totalKnotsDetonatedInUlt / 3, profile.EmancipatorMaxDreamRefund);
 					if (knotRefund > 0)
 					{
 						naughtPlayer.AddSlashedDream(knotRefund);
@@ -2343,7 +2329,7 @@ namespace WeepForTheDeparted.Content.Projectiles
 			}
 
 			int cappedKnots = Math.Min(MaxSiphonKnotsPerUlt, totalKnotsDetonatedInUlt);
-			int targetTotalHeal = (int)MathF.Round(Owner.statLifeMax2 * (cappedKnots * SiphonHealPerKnot));
+			int targetTotalHeal = (int)MathF.Round(Owner.statLifeMax2 * (cappedKnots * WeepBalance.Active.SiphonHealPerKnot));
 			int healNow = targetTotalHeal - siphonHealedHpInUlt;
 			if (healNow > 0)
 			{
@@ -2420,12 +2406,13 @@ namespace WeepForTheDeparted.Content.Projectiles
 
 			if (Owner != null && Owner.TryGetModPlayer<NaughtPlayer>(out var np))
 			{
+				np.StartUltimateRecastCooldown();
 				bool immediateCam = !Owner.active || Owner.dead || Owner.ghost;
 				np.ResetUltVisualAndCameraState(immediateCamera: immediateCam);
 
 				if (Owner.active && !Owner.dead && sheathDamageDone && np.HasThunderCore)
 				{
-					np.ThunderCoreBuffTimer = 900;
+					np.ThunderCoreBuffTimer = WeepBalance.Active.ThunderCoreBuffTicks;
 				}
 			}
 
